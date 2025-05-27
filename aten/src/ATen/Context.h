@@ -81,6 +81,9 @@ class TORCH_API Context {
     }
   }
 
+  void registerForkHandlerForDeviceInit(at::DeviceType device_type);
+  bool isDeviceInBadFork(at::DeviceType device_type);
+
   Device getDeviceFromPtr(void* data, c10::DeviceType device_type) {
     lazyInitDevice(device_type);
 
@@ -105,6 +108,13 @@ class TORCH_API Context {
       // If the device is not initialized, no pointer can be pinned for it
       return false;
     }
+#ifndef WIN32
+    if (isDeviceInBadFork(opt_device_type.value())) {
+      // If the device is initialized in fork's parent, CUDA API calls
+      // within fork will fail.
+      return false;
+    }
+#endif
     return getAcceleratorHooksInterface(opt_device_type).isPinnedPtr(data);
   }
 
@@ -121,6 +131,7 @@ class TORCH_API Context {
   void lazyInitDevice(c10::DeviceType device_type) {
     if (device_type != at::kCPU) {
       c10::call_once(init_[static_cast<int8_t>(device_type)], [&] {
+        registerForkHandlerForDeviceInit(device_type);
         getAcceleratorHooksInterface(device_type).init();
       });
     }
