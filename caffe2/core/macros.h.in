@@ -15,6 +15,7 @@
 #cmakedefine CAFFE2_THREADPOOL_STATS
 #cmakedefine CAFFE2_USE_ACCELERATE
 #cmakedefine CAFFE2_USE_CUDNN
+#cmakedefine CAFFE2_USE_EIGEN_FOR_BLAS
 #cmakedefine CAFFE2_USE_FBCODE
 #cmakedefine CAFFE2_USE_GOOGLE_GLOG
 #cmakedefine CAFFE2_USE_LITE_PROTO
