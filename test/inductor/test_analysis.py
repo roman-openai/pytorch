@@ -160,7 +160,7 @@ def trace_files():
     return TRACE1, TRACE2
 
 
-def test_model(device, dtype, compile=True, addmm=True, bmm=True):
+def _test_model(device, dtype, compile=True, addmm=True, bmm=True):
     T = cT(device, dtype)
 
     def model():
@@ -221,7 +221,7 @@ def test_model(device, dtype, compile=True, addmm=True, bmm=True):
     return model
 
 
-def pointwise_test_model(device, dtype, compile=True):
+def _pointwise_test_model(device, dtype, compile=True):
     T = cT(device, dtype)
 
     def model():
@@ -293,7 +293,7 @@ class TestAnalysis(TestCase):
         if device == "cpu":
             # TODO cpu support
             return
-        om = test_model(device, dtype)
+        om = _test_model(device, dtype)
         REPEAT = 5
         trace1, trace2 = trace_files()
         print(f"first trace {trace1}")
@@ -343,7 +343,7 @@ class TestAnalysis(TestCase):
         if device == "cpu":
             # cpu doesn't produce traces currently
             return
-        om = test_model(device, dtype)
+        om = _test_model(device, dtype)
         torch._dynamo.reset()  # reset the cache
         with fresh_inductor_cache():
             with torch.profiler.profile(record_shapes=True) as p:
@@ -420,7 +420,7 @@ class TestAnalysis(TestCase):
         if device == "cpu":
             return
         max_autotune, backends = maxat
-        om = test_model(device, dtype, bmm=False)
+        om = _test_model(device, dtype, bmm=False)
         comp_omni = torch.compile(
             om,
             options={
@@ -530,7 +530,7 @@ class TestAnalysis(TestCase):
         max_autotune, backends = maxat
         if device == "cpu":
             return
-        om = test_model(device, dtype, compile=False)
+        om = _test_model(device, dtype, compile=False)
 
         comp_omni = torch.compile(
             om,
@@ -641,7 +641,7 @@ class TestAnalysis(TestCase):
         max_autotune, backends = maxat
         if device == "cpu":
             return
-        om = pointwise_test_model(device, dtype, compile=False)
+        om = _pointwise_test_model(device, dtype, compile=False)
         comp_omni = torch.compile(
             om,
             options={

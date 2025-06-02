@@ -139,7 +139,6 @@ class TestScheduler(TestCase):
     def test_flop_counter_op(self, device, dtype, options):
         if device == "cpu":
             return
-        T = cT(device, dtype)
 
         tc = _test_cases(device, dtype)
 

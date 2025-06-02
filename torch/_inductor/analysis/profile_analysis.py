@@ -384,7 +384,7 @@ class JsonProfile:
         path: str,
         nruns: int,
         benchmark_name: Optional[str] = None,
-        dtype: Optional[torch.dtype | str] = None,
+        dtype: Optional[Union[torch.dtype, str]] = None,
     ):
         """
         Convienence class for running common operations on chrome/perfetto json traces.
@@ -406,7 +406,7 @@ class JsonProfile:
                 self.dtype = None
         self._create_devices()
 
-    def convert_dtype(self, event: dict[str, Any]) -> torch.dtype | None:
+    def convert_dtype(self, event: dict[str, Any]) -> Optional[torch.dtype]:
         """
         Each op has a list of dtypes for each input arg. We need to convert these into a single dtype for flop estimation.
         Issues:
