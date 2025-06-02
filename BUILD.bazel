@@ -290,6 +290,7 @@ header_template_rule(
     substitutions = {
         "@AT_CUDNN_ENABLED@": "1",
         "@AT_CUSPARSELT_ENABLED@": "0",
+        "@AT_HIPSPARSELT_ENABLED@": "0",
         "@AT_ROCM_ENABLED@": "0",
         "@AT_MAGMA_ENABLED@": "0",
         "@NVCC_FLAGS_EXTRA@": "",
@@ -376,6 +377,7 @@ cc_library(
         ":torch_headers",
         "@fbgemm",
         "@ideep",
+        "@nlohmann",
     ],
     alwayslink = True,
 )
@@ -740,6 +742,7 @@ cc_library(
             "torch/csrc/distributed/c10d/intra_node_comm.cu",
             "torch/csrc/distributed/c10d/CUDASymmetricMemory.cu",
             "torch/csrc/distributed/c10d/CUDASymmetricMemoryOps.cu",
+            "torch/csrc/distributed/c10d/CUDASymmetricMemoryUtils.cpp",
             "torch/csrc/distributed/c10d/cuda/AsyncMM.cu",
             "torch/csrc/distributed/c10d/NanCheck.cu",
             "torch/csrc/distributed/c10d/quantization/quantization_gpu.cu",

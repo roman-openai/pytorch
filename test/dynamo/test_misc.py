@@ -2003,6 +2003,30 @@ utils_device.CURRENT_DEVICE == None""".split(
         with unittest.mock.patch("torch._dynamo.config.error_on_recompile", True):
             res = opt_fn(g, torch.ones(2, 2))
 
+    def test_set_descriptor(self):
+        class Field:
+            def __set__(self, obj, value):
+                obj.__dict__["field"] += value * 2
+
+        class Foo:
+            field = Field()
+
+            def __init__(self):
+                self.__dict__["field"] = 0
+
+        def fn(x, foo):
+            foo.field = 10
+            return x + foo.field
+
+        opt_fn = torch.compile(fn, fullgraph=True, backend="eager")
+        x = torch.zeros(2)
+        foo1, foo2 = Foo(), Foo()
+
+        ref = fn(x, foo1)
+        res = opt_fn(x, foo2)
+        self.assertEqual(ref, res)
+        self.assertEqual(foo1.field, foo2.field)
+
     def test_get_attr_function(self):
         def fn(g, x):
             return g(x)
@@ -5825,11 +5849,15 @@ utils_device.CURRENT_DEVICE == None""".split(
 
         error_message = ""
         if torch._dynamo.config.inline_inbuilt_nn_modules:
-            error_message = r"HigherOrderOperator: Mutating a variable not in the current scope \(SideEffects\)"
+            error_message = (
+                "map doesn't work unless it is captured completely with torch.compile"
+            )
         else:
             error_message = "Can't inplace modify module params/buffers"
 
-        with self.assertRaisesRegex(Unsupported, error_message):
+        with self.assertRaisesRegex(
+            torch._dynamo.exc.UncapturedHigherOrderOpError, error_message
+        ):
             opt_fn = torch.compile(mod, backend="eager", fullgraph=True)
             opt_fn(torch.randn(3, 2))
 
@@ -5927,7 +5955,7 @@ utils_device.CURRENT_DEVICE == None""".split(
         from functorch.experimental.control_flow import cond
 
         def true_fn(x):
-            return x
+            return x.clone()
 
         def false_fn(x):
             return x.sin()
@@ -7633,6 +7661,15 @@ utils_device.CURRENT_DEVICE == None""".split(
             torch.compile(dyn_fn, backend="eager")(y)
 
     @torch._dynamo.config.patch(capture_scalar_outputs=True)
+    def test_unbacked_empty_tensor(self):
+        @torch.compile(backend="eager", fullgraph=True)
+        def fn(x):
+            n = x.item()
+            return torch.empty((n - 1) // 2)
+
+        self.assertEqual(fn(torch.tensor([4])).size(0), 1)
+        self.assertEqual(fn(torch.tensor([1])).size(0), 0)
+
     def test_unbacked_2d_expand(self):
         @torch.compile(fullgraph=True, dynamic=True, backend="inductor")
         def func(a, b):
@@ -7640,16 +7677,16 @@ utils_device.CURRENT_DEVICE == None""".split(
             return a * 10
 
         a = torch.rand(1, 1)
-        b = torch.rand(2, 2)
+        b = torch.rand(1, 1)
 
         torch._dynamo.decorators.mark_unbacked(a, 0)
         torch._dynamo.decorators.mark_unbacked(a, 1)
         torch._dynamo.decorators.mark_unbacked(b, 0)
         torch._dynamo.decorators.mark_unbacked(b, 1)
-        # TODO(laithsakka): update inductor runtime asserts to properly raise
         func(a, b)
         func(torch.rand(4, 5), torch.rand(4, 5))
-        func(torch.rand(1, 1), torch.rand(2, 1))
+        with self.assertRaises(RuntimeError):
+            func(torch.rand(1, 1), torch.rand(2, 1))
 
     @torch._dynamo.config.patch(capture_scalar_outputs=True)
     def test_sym_constrain_range_on_replaced_unbacked_symbol(self):
@@ -7905,6 +7942,34 @@ utils_device.CURRENT_DEVICE == None""".split(
         fn(torch.randn(2))
         fn(torch.randn(3))
         fn(torch.randn(4))
+
+        self.assertEqual(counter.frame_count, 1)
+
+    @torch.compiler.config.patch(unbacked_sources="L['x']")
+    def test_unbacked_sources_tensor(self):
+        counter = CompileCounter()
+
+        @torch.compile(backend=counter)
+        def fn(x):
+            return x * x
+
+        fn(torch.randn(0))
+        fn(torch.randn(1))
+        fn(torch.randn(2))
+
+        self.assertEqual(counter.frame_count, 1)
+
+    @torch.compiler.config.patch(unbacked_sources="L['x']")
+    def test_unbacked_sources_scalar(self):
+        counter = CompileCounter()
+
+        @torch.compile(backend=counter)
+        def fn(x):
+            return x * x
+
+        fn(0)
+        fn(1)
+        fn(2)
 
         self.assertEqual(counter.frame_count, 1)
 
@@ -8377,6 +8442,17 @@ utils_device.CURRENT_DEVICE == None""".split(
         ref = fn(x, y)
         res = opt_fn(x, y)
         self.assertTrue(same(ref, res))
+
+    def test_recursion_depth_guards(self):
+        @torch.compile(dynamic=True)
+        def foo(*args, **kwargs):
+            if sum(args) == 0:
+                return 0
+            return 1
+
+        args = list(range(2000))
+        foo(*args)
+        # Previously would have crashed
 
     @dataclasses.dataclass
     class CSETestCase:
@@ -10975,7 +11051,7 @@ fn
         torch._dynamo.decorators.mark_unbacked(x, 1, strict=True)
         y = torch.randn(5, 5)
 
-        with self.assertRaisesRegex(RuntimeError, "RelaxedUnspecConstraint"):
+        with self.assertRaisesRegex(RuntimeError, "specialized"):
             fn(x, y)
 
     def test_sym_max_unbacked_sizelike_simplification(self):
@@ -11629,6 +11705,30 @@ fn
         ref = opt_fn(x)
         res = fn(x)
         self.assertEqual(ref, res)
+
+    def test_descriptor_side_effect(self):
+        # This pattern (readonly descriptor but writable value in `__dict__`) is
+        # from scipy `_make_tuple_bunch`:
+        # https://github.com/scipy/scipy/blob/maintenance/1.9.x/scipy/_lib/_bunch.py#L32-L226
+        def fget(obj):
+            return obj.__dict__["field"]
+
+        class MyClass:
+            def __init__(self, n):
+                self.__dict__["field"] = n
+
+            field = property(fget)
+
+        def fn(x):
+            obj = MyClass(42)
+            return x + obj.field, obj
+
+        opt_fn = torch.compile(fn, backend="eager", fullgraph=True)
+        x = torch.randn(4)
+        ref_t, ref_obj = fn(x)
+        res_t, res_obj = opt_fn(x)
+        self.assertEqual(ref_t, res_t)
+        self.assertEqual(ref_obj.field, res_obj.field)
 
     def test_assert_size_stride(self):
         x = torch.randn(2, 3, 4)
@@ -12492,6 +12592,16 @@ class MiscTestsDevice(torch._inductor.test_case.TestCase):
             )
 
         f(torch.tensor([30, 30], device=device), torch.tensor([68, 32], device=device))
+
+    def test_scalar_isin_decomposition(self):
+        def f():
+            x = torch.tensor(0)
+            return torch.isin(x, x)
+
+        opt_f = torch.compile(f, backend="inductor", fullgraph=True)
+        ref = f()
+        res = opt_f()
+        self.assertEqual(ref, res)
 
 
 devices = ("cuda", "hpu")
