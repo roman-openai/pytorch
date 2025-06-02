@@ -4,6 +4,7 @@ import dataclasses
 import functools
 import inspect
 import logging
+import operator
 import threading
 from collections import defaultdict
 from collections.abc import Sequence
@@ -39,14 +40,14 @@ if TYPE_CHECKING:
     from torch._dynamo.variables.functions import TritonKernelVariable
     from torch._subclasses.functional_tensor import BaseFunctionalizeAPI
     from torch.fx.proxy import Proxy
-    from torch.utils._triton import has_triton_package
+    from torch.utils._triton import has_triton
 
     TritonMetaParamsType = dict[str, int]
     TritonGridTupleType = tuple[Union[int, sympy.Expr, SymInt], ...]
     TritonGridCallableType = Callable[[TritonMetaParamsType], tuple[int, ...]]
     TritonGridType = Union[TritonGridTupleType, TritonGridCallableType]
 
-    if has_triton_package():
+    if has_triton():
         from triton.runtime.autotuner import Autotuner, Config as TritonConfig
         from triton.runtime.jit import JITFunction
     else:
@@ -1246,7 +1247,7 @@ class TritonHOPifier:
                 ]
                 configs = [
                     config[0]
-                    for config in sorted(est_timing, key=lambda x: x[1])[:top_k]
+                    for config in sorted(est_timing, key=operator.itemgetter(1))[:top_k]
                 ]
         return configs
 
