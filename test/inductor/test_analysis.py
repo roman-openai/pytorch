@@ -356,7 +356,7 @@ class TestAnalysis(TestCase):
         ):
             main()
         profile = JsonProfile(
-            trace2, 1, benchmark_name="foo", dtype=str(dtype).split(".")[-1]
+            trace2, benchmark_name="foo", dtype=str(dtype).split(".")[-1]
         )
         rep = profile.report()
         self.assertTrue(len(rep.split("\n")) > 3, f"Error, empty table:\n{rep}")
