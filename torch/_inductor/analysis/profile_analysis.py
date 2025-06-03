@@ -221,7 +221,7 @@ def _estimate_gb(event: dict[str, Any]) -> float:
     assert "Input Dims" in event["args"] and "Concrete Inputs" in event["args"]
     input_shapes = event["args"]["Input Dims"]
 
-    # NOTE these will be refactored into a similar object to FlopCounter soon^tm
+    # NOTE these will be refactored into a similar object to FlopCounter soon
     def mm_formula(M: int, N: int, K: int, size: int) -> int:
         return 2 * (M * K + N * K + M * N) * size
 
@@ -382,7 +382,6 @@ class JsonProfile:
     def __init__(
         self,
         path: str,
-        nruns: int,
         benchmark_name: Optional[str] = None,
         dtype: Optional[Union[torch.dtype, str]] = None,
     ):
@@ -393,7 +392,6 @@ class JsonProfile:
         with open(path) as f:
             self.data = json.load(f)
             self.events = self.data["traceEvents"]
-        self.nruns = nruns
         self.benchmark_name = benchmark_name
         if dtype is None:
             self.dtype = None
@@ -468,10 +466,6 @@ class JsonProfile:
         return _calculate_flops(event)
 
     def estimate_gb(self, event: dict[str, Any]) -> float:
-        """
-        This estimate isn't the best because it doesn't know if two input buffers are the same buffer, leading to an
-        overestimate of the real achieved bandwidth.
-        """
         return _estimate_gb(event)
 
     def augment_trace(self) -> None:
@@ -534,6 +528,11 @@ class JsonProfile:
         ]
         rows: dict[str, list[str]] = {}
 
+        def safe_div_format(x: float, y: float) -> str:
+            if y == 0:
+                return "0.0"
+            return f"{x / y:.4f}"
+
         for kernel_name, stats_set in dev.stats.items():
             ker_count = 0
             flops = 0
@@ -557,11 +556,11 @@ class JsonProfile:
             assert ker_count != 0
             rows[kernel_name] = [
                 str(ker_count),
-                str(flops / flops_count if flops_count != 0 else 0),
-                str(bw / bw_count if bw_count != 0 else 0),
-                str(latency / ker_count if ker_count != 0 else 0),
-                str(achieved_flops / flops_count if flops_count != 0 else 0),
-                str(achieved_bandwidth / bw_count if bw_count != 0 else 0),
+                safe_div_format(flops, flops_count),
+                safe_div_format(bw, bw_count),
+                safe_div_format(latency, ker_count),
+                safe_div_format(achieved_flops, flops_count),
+                safe_div_format(achieved_bandwidth, bw_count),
             ]
 
         return headers, rows
@@ -657,17 +656,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--diff",
-        nargs=7,
+        nargs=5,
         metavar=(
             "input_file1",
-            "nruns1",
             "name1",
             "input_file2",
-            "nruns2",
             "name2",
             "dtype",
         ),
-        help="Two json traces to compare with, specified as <file1> <nruns1> <name1> <file2> <nruns2> <name2> <dtype>",
+        help="Two json traces to compare with, specified as <file1> <name1> <file2> <name2> <dtype>",
     )
     parser.add_argument(
         "--name_limit",
@@ -683,20 +680,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--analysis",
-        nargs=3,
-        metavar=("input_file", "nruns", "dtype"),
-        help="Run analysis on a single trace, specified as <file> <nruns> <dtype>",
+        nargs=2,
+        metavar=("input_file", "dtype"),
+        help="Run analysis on a single trace, specified as <file> <dtype>",
     )
     args = parser.parse_args()
 
     if args.diff:
-        p1 = JsonProfile(
-            args.diff[0], int(args.diff[1]), args.diff[2], dtype=args.diff[6]
-        )
+        p1 = JsonProfile(args.diff[0], args.diff[1], dtype=args.diff[4])
         p1.augment_trace()
-        p2 = JsonProfile(
-            args.diff[3], int(args.diff[4]), args.diff[5], dtype=args.diff[6]
-        )
+        p2 = JsonProfile(args.diff[2], args.diff[3], dtype=args.diff[4])
         p2.augment_trace()
         if args.name_limit:
             print(p1.report(p2, name_limit=args.name_limit))
@@ -705,8 +698,7 @@ def main() -> None:
     if args.analysis:
         p1 = JsonProfile(
             args.analysis[0],
-            args.analysis[1],
-            dtype=args.analysis[2],
+            dtype=args.analysis[1],
         )
         p1.augment_trace()
         if args.name_limit:
@@ -714,7 +706,7 @@ def main() -> None:
         else:
             print(p1.report())
     if args.augment_trace:
-        p = JsonProfile(args.augment_trace[0], 1, dtype=args.augment_trace[2])
+        p = JsonProfile(args.augment_trace[0], dtype=args.augment_trace[2])
         p.augment_trace()
         p.dump(args.augment_trace[1])
 

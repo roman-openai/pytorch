@@ -318,10 +318,8 @@ class TestAnalysis(TestCase):
                 *prefix,
                 "--diff",
                 trace1,
-                "1",
                 "foo",
                 trace2,
-                str(REPEAT),
                 "bar",
                 str(dtype).split(".")[-1],
                 "--name_limit",
@@ -661,7 +659,7 @@ class TestAnalysis(TestCase):
 
         with patch(
             "sys.argv",
-            [*prefix, "--analysis", trace1, "1", str(dtype).split(".")[-1]],
+            [*prefix, "--analysis", trace1, str(dtype).split(".")[-1]],
         ):
             main()
 
