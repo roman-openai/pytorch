@@ -3140,7 +3140,6 @@ def get_ld_library_path() -> str:
     return path
 
 
-
 def is_codegen_graph_partition_subgraph(wrapper: PythonWrapperCodegen) -> bool:
     from torch._inductor.codegen.wrapper import SubgraphPythonWrapperCodegen
 
@@ -3148,6 +3147,7 @@ def is_codegen_graph_partition_subgraph(wrapper: PythonWrapperCodegen) -> bool:
         isinstance(wrapper, SubgraphPythonWrapperCodegen)
         and wrapper.partition_signatures is not None
     )
+
 
 def tabulate_2d(elements: Sequence[Sequence[T]], headers: Sequence[T]) -> str:
     widths = [len(str(e)) for e in headers]
