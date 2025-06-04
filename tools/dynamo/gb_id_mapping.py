@@ -56,18 +56,6 @@ def expand_hints(hints):
     return expanded_hints
 
 
-"""
-    Extracts and returns the value of a keyword argument from an AST node.
-
-    This function handles different types of AST nodes:
-    - If the node is a constant, it returns the constant value.
-    - If the node is an f-string, it reconstructs the string by
-      evaluating formatted values and concatenating them with string literals.
-    - For other types, it cleans the source segment to remove formatting artifacts.
-
-"""
-
-
 def extract_info_from_keyword(source, kw):
     param_source = get_source_segment(source, kw.value)
     if isinstance(kw.value, ast.Constant):
@@ -135,6 +123,38 @@ def find_unimplemented_v2_calls(dynamo_dir):
                 print(f"Syntax error in {file_path}")
 
     return results
+
+
+def cmd_add_new_gb_type(gb_type, file_path, registry_path):
+    registry_path = Path(registry_path)
+    reg = load_registry(registry_path)
+
+    existing_gb_types = {entry["Gb_type"] for entry in reg.values()}
+    if gb_type in existing_gb_types:
+        print(
+            f"Error: gb_type '{gb_type}' already exists in registry. Please rename the gb_type so it can be unique."
+        )
+        return False
+
+    calls = find_unimplemented_v2_calls(Path(file_path))
+    matching_call = next((call for call in calls if call["gb_type"] == gb_type), None)
+
+    if not matching_call:
+        print(
+            f"Error: Could not find unimplemented_v2 call with gb_type '{gb_type}' in {file_path}"
+        )
+        return False
+
+    gb_id = next_gb_id(reg)
+    reg[gb_id] = {
+        "Gb_type": gb_type,
+        "Context": matching_call["context"],
+        "Explanation": matching_call["explanation"],
+        "Hints": matching_call["hints"] or [],
+    }
+
+    save_registry(reg, registry_path)
+    print(f"Added {gb_type} to registry with ID {gb_id}")
 
 
 def create_registry(dynamo_dir, registry_path):
