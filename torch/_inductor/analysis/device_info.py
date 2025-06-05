@@ -120,7 +120,32 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_bw_gbs=5300.0,
         dram_gb=192.0,
     ),
+    # Source: https://www.amd.com/en/products/accelerators/instinct/mi200/mi210.html
+    # Source: https://www.amd.com/content/dam/amd/en/documents/instinct-business-docs/product-briefs/instinct-mi210-brochure.pdf
+    "AMD MI210X": DeviceInfo(
+        tops={
+            torch.float64: 45.3,
+            torch.float32: 45.3,
+            # not specified, fall back to float32 numbers
+            "torch.tf32": 45.3,
+            torch.bfloat16: 181.0,
+            torch.float16: 181.0,
+            # not specified, fall back to float16 numbers
+            torch.float8_e8m0fnu: 181.0,
+            torch.float8_e8m0fnu: 181.0,
+            torch.float8_e4m3fnuz: 181.0,
+            torch.float8_e5m2: 181.0,
+            torch.float8_e5m2fnuz: 181.0,
+            torch.float8_e8m0fnu: 181.0,
+            torch.int8: 181.0,
+        },
+        # pcie4.0x16
+        dram_bw_gbs=1600.0,
+        dram_gb=64.0,
+    ),
 }
+_device_mapping["AMD INSTINCT MI300X"] = _device_mapping["AMD MI300X"]
+_device_mapping["AMD INSTINCT MI210X"] = _device_mapping["AMD MI210X"]
 
 
 def lookup_device_info(name: str) -> Optional[DeviceInfo]:

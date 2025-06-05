@@ -365,7 +365,7 @@ KernelNameMap = defaultdict[str, OrderedSet[KernelStats]]
 class Device:
     name: str
     index: int
-    info: DeviceInfo
+    info: Optional[DeviceInfo]
     stats: KernelNameMap
 
     def __repr__(self) -> str:
@@ -454,9 +454,11 @@ class JsonProfile:
         for dev in self.data["deviceProperties"]:
             name = dev["name"]
             device_info = lookup_device_info(name)
+
             if device_info is None:
-                raise RuntimeError(
-                    f"Unsupported device in profile: {name}, please consider contributing to _device_mapping."
+                log.info(
+                    "Unsupported device in profile: %s, please consider contributing to _device_mapping.",
+                    name,
                 )
             self._devices[dev["id"]] = Device(
                 name, dev["id"], device_info, defaultdict(OrderedSet)
@@ -477,32 +479,32 @@ class JsonProfile:
             if "cat" not in event or "args" not in event or event["cat"] != "kernel":
                 continue
             dev = self._devices[event["args"]["device"]]
+
             dur = event["dur"]  # us
             if "kernel_flop" in event["args"]:
                 assert dur != 0
                 # 1,000,000us/s * flop / us
                 op_flops = event["args"]["kernel_flop"] / (dur / 1e6)
-                if op_flops == 0:
-                    achieved_flops = 0
-                else:
-                    dtype = self.convert_dtype(event) or self.dtype
-                    if dtype is None:
-                        raise RuntimeError(
-                            "dtype is not found on tensor and default dtype is not set"
-                        )
-                    achieved_flops = 100 * op_flops / (1e12 * dev.info.tops[dtype])
-
             else:
                 op_flops = 0
-                achieved_flops = 0
 
             if "kernel_num_gb" in event["args"]:
                 assert dur != 0
                 # 1,000,000us/s * gb  = gb/s
                 op_gbps = event["args"]["kernel_num_gb"] / (dur / 1e6)
-                achieved_bandwidth = 100 * op_gbps / dev.info.dram_bw_gbs
             else:
                 op_gbps = 0
+
+            if dev.info is not None:
+                dtype = self.convert_dtype(event) or self.dtype
+                if dtype is None:
+                    raise RuntimeError(
+                        "dtype is not found on tensor and default dtype is not set"
+                    )
+                achieved_flops = 100 * op_flops / (1e12 * dev.info.tops[dtype])
+                achieved_bandwidth = 100 * op_gbps / dev.info.dram_bw_gbs
+            else:
+                achieved_flops = 0
                 achieved_bandwidth = 0
 
             dev.stats[event["name"]].add(
