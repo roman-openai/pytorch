@@ -27,7 +27,7 @@ class DeviceInfo:
 # Indexing is based on `torch.cuda.get_device_name()`
 # TODO investigate profiler support for tf32 and allow device to report correct number when it's turned on.
 _device_mapping: dict[str, DeviceInfo] = {
-    # Source: https://www.nvidia.com/en-us/data-center/h100/
+    # Source: https://www.nvidia.com/en-us/data-center/h100/ @lint-ignore
     "NVIDIA H100": DeviceInfo(
         tops={
             torch.float64: 67.0,
@@ -47,7 +47,7 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_gb=80,
     ),
     # Source:
-    # https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/\
+    # https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/ @lint-ignore
     # nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf
     "NVIDIA A100": DeviceInfo(
         tops={
@@ -62,7 +62,7 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_bw_gbs=2039.0,
         dram_gb=80.0,
     ),
-    # Source: https://resources.nvidia.com/en-us-gpu-resources/l4-tensor-datasheet
+    # Source: https://resources.nvidia.com/en-us-gpu-resources/l4-tensor-datasheet @lint-ignore
     "NVIDIA L4": DeviceInfo(
         tops={
             # This is a guess, not in datasheet
@@ -82,7 +82,7 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_bw_gbs=3350,
         dram_gb=24,
     ),
-    # Source: https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300a-data-sheet.pdf
+    # Source: https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300a-data-sheet.pdf @lint-ignore
     "AMD MI300A": DeviceInfo(
         tops={
             torch.float64: 122.6,
@@ -101,7 +101,7 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_bw_gbs=5300.0,
         dram_gb=128.0,
     ),
-    # Source: https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300x-data-sheet.pdf
+    # Source: https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300x-data-sheet.pdf @lint-ignore
     "AMD MI300X": DeviceInfo(
         tops={
             torch.float64: 163.4,
@@ -120,8 +120,8 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_bw_gbs=5300.0,
         dram_gb=192.0,
     ),
-    # Source: https://www.amd.com/en/products/accelerators/instinct/mi200/mi210.html
-    # Source: https://www.amd.com/content/dam/amd/en/documents/instinct-business-docs/product-briefs/instinct-mi210-brochure.pdf
+    # Source: https://www.amd.com/en/products/accelerators/instinct/mi200/mi210.html @lint-ignore
+    # Source: https://www.amd.com/content/dam/amd/en/documents/instinct-business-docs/product-briefs/instinct-mi210-brochure.pdf @lint-ignore
     "AMD MI210X": DeviceInfo(
         tops={
             torch.float64: 45.3,
