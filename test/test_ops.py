@@ -800,31 +800,31 @@ class TestCommon(TestCase):
     #   - out= with the correct dtype and device, but the wrong shape
     @ops(ops_and_refs, dtypes=OpDTypes.none)
     def test_out_warning(self, device, op):
-        if TEST_WITH_TORCHDYNAMO and op.name == "_refs.clamp":
-            self.skipTest("flaky")
-        # Prefers running in float32 but has a fallback for the first listed supported dtype
-        supported_dtypes = op.supported_dtypes(self.device_type)
-        if len(supported_dtypes) == 0:
-            self.skipTest("Skipped! Op has not supported dtypes on this device.")
-        dtype = (
-            torch.float32
-            if torch.float32 in supported_dtypes
-            else next(iter(supported_dtypes))
-        )
+        # if TEST_WITH_TORCHDYNAMO and op.name == "_refs.clamp":
+        #     self.skipTest("flaky")
+        # # Prefers running in float32 but has a fallback for the first listed supported dtype
+        # supported_dtypes = op.supported_dtypes(self.device_type)
+        # if len(supported_dtypes) == 0:
+        #     self.skipTest("Skipped! Op has not supported dtypes on this device.")
+        # dtype = (
+        #     torch.float32
+        #     if torch.float32 in supported_dtypes
+        #     else next(iter(supported_dtypes))
+        # )
 
-        # Ops from python_ref_db point to python decomps that are potentially
-        # wrapped with `torch._prims_common.wrappers.out_wrapper`. Unwrap these
-        # ops before testing to avoid clashing with OpInfo.supports_out
-        if not op.supports_out:
-            op = copy.copy(op)
-            op.op = _maybe_remove_out_wrapper(op.op)
+        # # Ops from python_ref_db point to python decomps that are potentially
+        # # wrapped with `torch._prims_common.wrappers.out_wrapper`. Unwrap these
+        # # ops before testing to avoid clashing with OpInfo.supports_out
+        # if not op.supports_out:
+        #     op = copy.copy(op)
+        #     op.op = _maybe_remove_out_wrapper(op.op)
 
-        samples = op.sample_inputs(device, dtype)
+        samples = op.sample_inputs(device, torch.float32)
+        # print([sample for sample in samples])
         for sample in samples:
             # calls it normally to get the expected result
             expected = op(sample.input, *sample.args, **sample.kwargs)
             op_out = partial(op, sample.input, *sample.args, **sample.kwargs)
-
             # Short-circuits if output is not a single tensor or an
             #   iterable of tensors
             if not isinstance(expected, torch.Tensor) and not is_iterable_of_tensors(
@@ -876,11 +876,14 @@ class TestCommon(TestCase):
                 out = _apply_out_transform(transform, expected)
                 original_strides = _extract_strides(out)
                 original_ptrs = _extract_data_ptrs(out)
-
+                print(f"Out here is: {out}") # tensor([6.0704, 2.1703])
+                print(expected) # -10.2314
                 op_out(out=out)
                 final_strides = _extract_strides(out)
                 final_ptrs = _extract_data_ptrs(out)
 
+                print(f"Out after running is: {out}") # tensor([6.0704, 2.1703])
+                print(expected) # -10.2314
                 self.assertEqual(expected, out)
 
                 if compare_strides_and_data_ptrs:
@@ -895,12 +898,14 @@ class TestCommon(TestCase):
             #   Expected behavior: if nonempty, resize with a warning.
             def _case_zero_transform(t):
                 wrong_shape = list(t.shape)
-
+                # import pdb; pdb.set_trace()
+                print(f"shape is: {wrong_shape} before")
                 if len(wrong_shape) == 0:
                     # Handles scalar tensor case (empty list)
                     wrong_shape = [2]
                 else:
                     wrong_shape[-1] = wrong_shape[-1] + 1
+                print(f"shape is: {wrong_shape} after")
                 return make_tensor(wrong_shape, dtype=t.dtype, device=t.device)
 
             # Verifies the out values are correct
