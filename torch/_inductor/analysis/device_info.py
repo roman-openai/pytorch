@@ -28,7 +28,7 @@ class DeviceInfo:
 # TODO investigate profiler support for tf32 and allow device to report correct number when it's turned on.
 _device_mapping: dict[str, DeviceInfo] = {
     # Source:
-    # https://www.nvidia.com/en-us/data-center/h100/ @lint-ignore
+    # @lint-ignore https://www.nvidia.com/en-us/data-center/h100/
     "NVIDIA H100": DeviceInfo(
         tops={
             torch.float64: 67.0,
@@ -48,7 +48,7 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_gb=80,
     ),
     # Source:
-    # https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/ @lint-ignore
+    # @lint-ignore https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/
     # nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf
     "NVIDIA A100": DeviceInfo(
         tops={
@@ -64,7 +64,7 @@ _device_mapping: dict[str, DeviceInfo] = {
         dram_gb=80.0,
     ),
     # Source:
-    # https://resources.nvidia.com/en-us-gpu-resources/l4-tensor-datasheet @lint-ignore
+    # @lint-ignore https://resources.nvidia.com/en-us-gpu-resources/l4-tensor-datasheet
     "NVIDIA L4": DeviceInfo(
         tops={
             # This is a guess, not in datasheet
