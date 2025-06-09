@@ -434,6 +434,15 @@ bool same_strides(const Tensor& t1, const Tensor& t2) {
       t2_strides_no_ones.begin(),
       t2_strides_no_ones.end());
 }
+
+// Whether we will use ragged offsets in the dense (non-nested) path
+// to avoid recompilation
+bool use_ragged_in_dense() {
+  static bool flag = c10::utils::check_env("TORCH_CUDNN_SDPA_AVOID_RECOMPILE") == true;
+  TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 is currently experimental. "
+                  "Please report any issues to https://github.com/pytorch/pytorch/issues.");
+  return flag;
+}
 } // namespace
 
 auto build_graph(
@@ -475,12 +484,33 @@ auto build_graph(
                             .set_stride({1, 1, 1, 1})
                             .set_is_pass_by_value(true)
                             .set_data_type(fe::DataType_t::FLOAT));
+
   auto scaled_dot_product_flash_attention_options =
       fe::graph::SDPA_attributes()
           .set_name("CUDNN_SDPA")
           .set_is_inference(return_softmaxstats == false)
           .set_causal_mask(is_causal)
           .set_attn_scale(attn_scale);
+  if (use_ragged_in_dense()) {
+    auto SEQ_LEN_Q_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(SEQ_LEN_Q)
+                              .set_name("Seq_q")
+                              .set_dim({b, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto SEQ_LEN_KV_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(SEQ_LEN_KV)
+                              .set_name("Seq_kv")
+                              .set_dim({b, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    scaled_dot_product_flash_attention_options
+          .set_seq_len_q(SEQ_LEN_Q_)
+          .set_seq_len_kv(SEQ_LEN_KV_)
+          .set_padding_mask(true);
+  }
   if (dropout_probability != 0.0f) {
     auto seed = mha_graph->tensor(fe::graph::Tensor_attributes()
                                       .set_uid(SEED)
@@ -537,10 +567,56 @@ auto build_graph(
   O_->set_uid(O);
   O_->set_output(true).set_dim(o.sizes().vec()).set_stride(o.strides().vec());
 
+
   if (Stats) {
     Stats->set_uid(LSE);
     Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
   }
+  if (use_ragged_in_dense()) {
+    auto RAG_Q_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_Q_OFF)
+                              .set_name("cum_seq_q")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_K_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_K_OFF)
+                              .set_name("cum_seq_k")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_V_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_V_OFF)
+                              .set_name("cum_seq_v")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_O_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_O_OFF)
+                              .set_name("cum_seq_o")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_STATS_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_LSE_OFF)
+                              .set_name("cum_seq_stats")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    O_->set_ragged_offset(RAG_O_OFF_);
+    Q_->set_ragged_offset(RAG_Q_OFF_);
+    K_->set_ragged_offset(RAG_K_OFF_);
+    V_->set_ragged_offset(RAG_V_OFF_);
+    if (Stats) {
+      Stats->set_ragged_offset(RAG_STATS_OFF_);
+    }
+  }
+
 
   AT_CUDNN_FRONTEND_CHECK(mha_graph->validate());
   AT_CUDNN_FRONTEND_CHECK(mha_graph->build_operation_graph(handle));
@@ -1145,6 +1221,38 @@ void run_cudnn_SDP_fprop(
     Tensor& o,
     Tensor& dropoutseed,
     Tensor& dropoutoffset) {
+  // do nothing if we got 0-element tensors
+  if (!q.numel() || !k.numel() || !v.numel()) {
+    return;
+  }
+  Tensor seqlen_q, seqlen_kv;
+  Tensor rag_off_q, rag_off_k, rag_off_v, rag_off_o, rag_off_lse;
+
+  if (!o.defined()) {
+    // q is passed to us in BHSD dim order
+    alloc_with_matching_layout(q, o, {b, h, s_q, d_v});
+  }
+  if (return_softmaxstats && !softmaxstats.defined()) {
+    // TODO(eqy): verify that this is correct
+    softmaxstats = at::empty({b, h, s_q}, q.options().dtype(kFloat));
+  }
+
+  if (use_ragged_in_dense()) {
+    seqlen_q = at::full({b, 1, 1, 1}, s_q, q.options().dtype(kInt));
+    seqlen_kv = at::full({b, 1, 1, 1}, s_kv, q.options().dtype(kInt));
+    auto cum_seqlen_q = at::full({b + 1, 1, 1, 1}, s_q, q.options().dtype(kInt)).cumsum(0).add_(-s_q);
+    auto cum_seqlen_kv = at::full({b + 1, 1, 1, 1}, s_kv, q.options().dtype(kInt)).cumsum(0).add_(-s_kv);
+    rag_off_q = cum_seqlen_q.mul(q.stride(-2));
+    rag_off_k = cum_seqlen_kv.mul(k.stride(-2));
+    rag_off_v = cum_seqlen_kv.mul(v.stride(-2));
+    rag_off_o = cum_seqlen_q.mul(o.stride(-2));
+    if (return_softmaxstats) {
+      rag_off_lse = cum_seqlen_q.mul(softmaxstats.stride(-1));
+    }
+    TORCH_WARN(seqlen_q, cum_seqlen_q, rag_off_q);
+    TORCH_WARN(seqlen_kv, cum_seqlen_kv, rag_off_k);
+  }
+
   const auto dprops = at::cuda::getCurrentDeviceProperties();
   auto _dropoutseed = dropoutseed;
   auto _dropoutoffset = dropoutoffset;
@@ -1154,21 +1262,7 @@ void run_cudnn_SDP_fprop(
     _dropoutoffset = dropoutoffset.to(kLong);
   }
 
-  cudnnHandle_t handle = getCudnnHandle();
-  if (!o.defined()) {
-    // q is passed to us in BHSD dim order
-    alloc_with_matching_layout(q, o, {b, h, s_q, d_v});
-  }
-
-  if (return_softmaxstats && !softmaxstats.defined()) {
-    // TODO(eqy): verify that this is correct
-    softmaxstats = at::empty({b, h, s_q}, q.options().dtype(kFloat));
-  }
-
-  // do nothing if we got 0-element tensors
-  if (!q.numel() || !k.numel() || !v.numel()) {
-    return;
-  }
+  cudnnHandle_t handle = getCudnnHandle(); 
 
   auto key = MHACacheKeyWrapper(
       b,
@@ -1225,6 +1319,17 @@ void run_cudnn_SDP_fprop(
   if (dropout_probability != 0.0f) {
     variant_pack[SEED] = _dropoutseed.data_ptr();
     variant_pack[OFFSET] = _dropoutoffset.data_ptr();
+  }
+  if (use_ragged_in_dense()) {
+    variant_pack[SEQ_LEN_Q] = seqlen_q.data_ptr();
+    variant_pack[SEQ_LEN_KV] = seqlen_kv.data_ptr();
+    variant_pack[RAG_Q_OFF] = rag_off_q.data_ptr();
+    variant_pack[RAG_K_OFF] = rag_off_k.data_ptr();
+    variant_pack[RAG_V_OFF] = rag_off_v.data_ptr();
+    variant_pack[RAG_O_OFF] = rag_off_o.data_ptr();
+    if (return_softmaxstats) {
+      variant_pack[RAG_LSE_OFF] = rag_off_lse.data_ptr();
+    }
   }
   auto workspace_size = mha_graph->get_workspace_size();
   auto workspace_ptr =
