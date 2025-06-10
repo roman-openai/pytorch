@@ -62,7 +62,7 @@ from typing import (
     TypeVar,
     Union,
 )
-from typing_extensions import Literal, TypeAlias, TypeGuard, TypeIs
+from typing_extensions import Literal, TypeIs
 
 import torch
 import torch._functorch.config
@@ -592,7 +592,7 @@ class CompileEventLogger:
         or ChromiumEventLogger is not initialized.
         This function is syntactic sugar for chromium_event_logger().try_add_event_data.
         """
-        if not chromium_event_log_active():
+        if CHROMIUM_EVENT_LOG is None:
             return
         chromium_log = get_chromium_event_logger()
         chromium_log.try_add_event_data(event_name, **metadata)
@@ -602,7 +602,7 @@ class CompileEventLogger:
         """
         Special function that quietly runs a given method, returning if CHROMIUM_EVENT_LOG is None or metrics context is not set
         """
-        if not chromium_event_log_active():
+        if CHROMIUM_EVENT_LOG is None:
             return
         metrics_context = get_metrics_context()
         if not metrics_context.in_progress():
@@ -1046,45 +1046,19 @@ def is_numpy_float_type(value):
     )
 
 
-@overload
-def is_lru_cache_wrapped_function(
-    value: Callable[..., T],
-) -> TypeGuard[functools._lru_cache_wrapper[T]]: ...
-
-
-@overload
-def is_lru_cache_wrapped_function(
-    value: Any,
-) -> TypeGuard[functools._lru_cache_wrapper[Any]]: ...
-
-
-def is_lru_cache_wrapped_function(
-    value: Any,
-) -> bool:
+def is_lru_cache_wrapped_function(value):
     return isinstance(value, functools._lru_cache_wrapper) and is_function(
         inspect.getattr_static(value, "__wrapped__")
     )
 
 
-_FuncTypes: TypeAlias = Union[
-    types.FunctionType,
-    types.BuiltinFunctionType,
-    types.MethodDescriptorType,
-    types.WrapperDescriptorType,
-]
-
-
-def is_function_or_wrapper(
-    value: Any,
-) -> TypeIs[Union[_FuncTypes, torch._ops.OpOverloadPacket, torch._ops.OpOverload]]:
+def is_function_or_wrapper(value):
     return is_function(value) or isinstance(
         value, (torch._ops.OpOverloadPacket, torch._ops.OpOverload)
     )
 
 
-def is_function(
-    value: Any,
-) -> TypeIs[_FuncTypes]:
+def is_function(value):
     return isinstance(
         value,
         (
@@ -1116,17 +1090,7 @@ cmp_name_to_op_str_mapping = {
 }
 
 
-def is_wrapper_or_member_descriptor(
-    value: Any,
-) -> TypeIs[
-    Union[
-        types.GetSetDescriptorType,
-        types.MethodDescriptorType,
-        types.WrapperDescriptorType,
-        types.MemberDescriptorType,
-        types.MethodWrapperType,
-    ]
-]:
+def is_wrapper_or_member_descriptor(value):
     return isinstance(
         value,
         (
@@ -1959,11 +1923,6 @@ def get_chromium_event_logger() -> ChromiumEventLogger:
     return CHROMIUM_EVENT_LOG
 
 
-def chromium_event_log_active() -> bool:
-    global CHROMIUM_EVENT_LOG
-    return CHROMIUM_EVENT_LOG is not None
-
-
 @contextmanager
 def chromium_event_timed(
     event_name: str,
@@ -2163,9 +2122,7 @@ def preserve_rng_state():
                 torch.cuda.set_rng_state(cuda_rng_state)  # type: ignore[possibly-undefined]
 
 
-def is_jit_model(
-    model0,
-):
+def is_jit_model(model0):
     return isinstance(
         model0,
         (
@@ -2379,7 +2336,7 @@ def common_constants():
     }
 
 
-def is_torch_sym(value: Any) -> TypeGuard[Union[torch.SymBool, torch.SymInt]]:
+def is_torch_sym(value):
     return isinstance(value, (torch.SymBool, torch.SymInt)) and not isinstance(
         value.node, torch.nested._internal.nested_int.NestedIntNode
     )
@@ -2400,10 +2357,6 @@ def is_int_specialization_case(value, source):
         )
         or (
             source.guard_source().is_unspecialized_builtin_nn_module()
-            and not config.allow_unspec_int_on_nn_module
-        )
-        or (
-            source.guard_source().is_unspecialized_nn_module()
             and not config.allow_unspec_int_on_nn_module
         )
         or is_from_defaults(source)
@@ -2656,9 +2609,7 @@ def iter_contains(items, search, tx, check_tensor_identity=False):
     return found
 
 
-def key_is_id(
-    k: Any,
-) -> TypeIs[Union[torch.Tensor, torch.nn.Module, MethodWrapperType]]:
+def key_is_id(k):
     """Returns whether it indexes dictionaries using its id"""
     return isinstance(k, (torch.Tensor, torch.nn.Module, MethodWrapperType))
 
@@ -3547,12 +3498,6 @@ def import_submodule(mod: types.ModuleType):
 
 def object_has_getattribute(value: Any):
     return class_has_getattribute(type(value))
-
-
-def object_setattr_ignore_descriptor(obj, name, value):
-    # https://github.com/python/cpython/blob/3.11/Objects/object.c#L1286-L1335
-    d = object.__getattribute__(obj, "__dict__")
-    d[name] = value
 
 
 def class_has_getattribute(cls: type):

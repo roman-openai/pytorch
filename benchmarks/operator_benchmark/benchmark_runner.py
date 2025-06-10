@@ -152,16 +152,13 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--output-csv",
-        "--output_csv",
-        help="CSV file path to store the results",
+        "--output-dir",
+        help="Choose the output directory to save the logs",
         default="benchmark_logs",
     )
-
     parser.add_argument(
-        "--output-json-for-dashboard",
-        "--output_json_for_dashboard",
-        help="Save results in JSON format for display on the OSS dashboard",
+        "--disable-output",
+        help="Disable log output to csv file",
         default="False",
     )
 

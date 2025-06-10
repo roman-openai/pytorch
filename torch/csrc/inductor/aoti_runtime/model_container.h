@@ -12,7 +12,8 @@
 // applies to other files under torch/csrc/inductor/aoti_runtime/.
 #include <torch/csrc/inductor/aoti_runtime/model.h>
 
-namespace torch::aot_inductor {
+namespace {
+
 // The state transition is done by:
 // (1) NONE state: The default state when created. This state should only exist
 // when model_container is created and no constants are being loaded or updated.
@@ -22,7 +23,7 @@ namespace torch::aot_inductor {
 // const_fold is being invoked.
 enum class ConstantState : uint8_t { NONE, INITIALIZED, FOLDED, UNKNOWN };
 
-inline std::string toStringConstantState(ConstantState state) {
+std::string toStringConstantState(ConstantState state) {
   switch (state) {
     case ConstantState::NONE:
       return "ConstantState::NONE";
@@ -36,6 +37,10 @@ inline std::string toStringConstantState(ConstantState state) {
       return "Unknown enum class state for ConstantState";
   }
 }
+
+} // namespace
+
+namespace torch::aot_inductor {
 
 class AOTInductorModelContainer {
  public:
@@ -230,13 +235,6 @@ class AOTInductorModelContainer {
       throw std::runtime_error("No available models in container!");
     }
     return models_[0]->constant_from_folded(static_cast<int64_t>(idx));
-  }
-
-  size_t constant_data_size(size_t idx) const {
-    if (this->num_models() == 0) {
-      throw std::runtime_error("No available models in container!");
-    }
-    return models_[0]->constant_data_size(static_cast<int64_t>(idx));
   }
 
   // retrieve type of constants_info_[idx]

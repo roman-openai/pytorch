@@ -34,7 +34,6 @@ from torch._utils_internal import full_aoti_runtime_assert
 from torch.fx.experimental._backward_state import BackwardState
 from torch.fx.experimental.sym_node import magic_methods, method_to_operator
 from torch.fx.experimental.symbolic_shapes import (
-    _get_placeholder_expr,
     free_unbacked_symbols,
     has_free_symbols,
     resolve_unbacked_bindings,
@@ -1067,7 +1066,7 @@ class GraphLowering(torch.fx.Interpreter):
         example = super().placeholder(target, args, kwargs)  # type: ignore[arg-type]
         target = self.qualify_name(target)
         if isinstance(example, SymTypes):
-            expr = _get_placeholder_expr(example.node)
+            expr = example.node.expr
             self.graph_inputs[target] = expr
             self.graph_input_names.append(target)
             return expr
@@ -2285,8 +2284,8 @@ class GraphLowering(torch.fx.Interpreter):
             return self._compile_to_module()
 
     def _compile_to_module(self) -> CompiledModule:
-        # If we're here, we don't have to worry about the kernel code, which is only
-        # returned separately in AOTInductor mode.
+        # Currently, if we're here, we don't have to worry about the kernel code, which
+        # is only available in AOTInductor mode.
         wrapper_code, _ = (
             self.codegen_with_cpp_wrapper() if self.cpp_wrapper else self.codegen()
         )

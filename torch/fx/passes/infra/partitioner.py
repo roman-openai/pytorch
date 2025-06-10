@@ -2,7 +2,6 @@
 import collections
 import itertools
 import logging
-import operator
 from collections.abc import Iterable, Sequence
 from typing import Optional
 
@@ -216,7 +215,7 @@ class CapabilityBasedPartitioner:
 
             # merge all possible partitions
             for partition_id, _ in sorted(
-                partitions_order.items(), key=operator.itemgetter(1)
+                partitions_order.items(), key=lambda item: item[1]
             ):
                 merge_candidates[partition_id] = None
 
