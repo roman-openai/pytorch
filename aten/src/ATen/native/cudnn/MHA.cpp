@@ -1240,8 +1240,8 @@ void run_cudnn_SDP_fprop(
   if (use_ragged_in_dense()) {
     seqlen_q = at::full({b, 1, 1, 1}, s_q, q.options().dtype(kInt));
     seqlen_kv = at::full({b, 1, 1, 1}, s_kv, q.options().dtype(kInt));
-    auto cum_seqlen_q = at::full({b + 1, 1, 1, 1}, s_q, q.options().dtype(kInt)).cumsum(0).add_(-s_q);
-    auto cum_seqlen_kv = at::full({b + 1, 1, 1, 1}, s_kv, q.options().dtype(kInt)).cumsum(0).add_(-s_kv);
+    auto cum_seqlen_q = at::full({b + 1, 1, 1, 1}, s_q, q.options().dtype(kInt)).cumsum(0, kInt).add_(-s_q);
+    auto cum_seqlen_kv = at::full({b + 1, 1, 1, 1}, s_kv, q.options().dtype(kInt)).cumsum(0, kInt).add_(-s_kv);
     rag_off_q = cum_seqlen_q.mul(q.stride(-2));
     rag_off_k = cum_seqlen_kv.mul(k.stride(-2));
     rag_off_v = cum_seqlen_kv.mul(v.stride(-2));
@@ -1251,6 +1251,8 @@ void run_cudnn_SDP_fprop(
     }
     TORCH_WARN(seqlen_q, cum_seqlen_q, rag_off_q);
     TORCH_WARN(seqlen_kv, cum_seqlen_kv, rag_off_k);
+    TORCH_WARN(cum_seqlen_q.dtype() == kInt, rag_off_q.dtype() == kInt);
+    TORCH_WARN(cum_seqlen_q.dtype() == kLong, rag_off_q.dtype() == kLong);
   }
 
   const auto dprops = at::cuda::getCurrentDeviceProperties();
