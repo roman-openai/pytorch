@@ -1,6 +1,5 @@
 # mypy: allow-untyped-defs
 import dataclasses
-import operator
 import sys
 from enum import Enum
 from typing import Callable, Optional
@@ -2016,4 +2015,4 @@ def create_micro_gemm(
         else:
             return None
     # TODO(jgong5): allow autotuning on choices of configs
-    return create_from_config(*max(matched_configs, key=operator.itemgetter(0))[1:])
+    return create_from_config(*max(matched_configs, key=lambda x: x[0])[1:])

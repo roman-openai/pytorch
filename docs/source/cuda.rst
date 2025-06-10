@@ -40,7 +40,6 @@ torch.cuda
     temperature
     power_draw
     clock_rate
-    AcceleratorError
     OutOfMemoryError
 
 Random Number Generator
@@ -129,6 +128,7 @@ Memory management
      CUDAPluggableAllocator
      change_current_allocator
      MemPool
+     MemPoolContext
 
 .. currentmodule:: torch.cuda.memory
 

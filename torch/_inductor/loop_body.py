@@ -312,14 +312,6 @@ class LoopBody:
             for entry in self.memory_usage[MemoryUsageType.LOAD]
         ]
 
-    def get_all_read_expr(self, buffer_name):
-        # reversed to match old behavior
-        out = []
-        for entry in reversed(self.memory_usage[MemoryUsageType.LOAD]):
-            if entry.buffer_name == buffer_name:
-                out.append(self.indexing_exprs[entry.index_name])
-        return out
-
     def get_write_exprs(self):
         return [
             self.indexing_exprs[entry.index_name]
@@ -328,16 +320,6 @@ class LoopBody:
                 self.memory_usage[MemoryUsageType.STORE_REDUCTION],
             )
         ]
-
-    def get_all_write_expr(self, buffer_name):
-        out = []
-        for entry in itertools.chain(
-            self.memory_usage[MemoryUsageType.STORE],
-            self.memory_usage[MemoryUsageType.STORE_REDUCTION],
-        ):
-            if entry.buffer_name == buffer_name:
-                out.append(self.indexing_exprs[entry.index_name])
-        return out
 
     def debug_str(self):
         lines = [f"var_ranges = {dict(self.var_ranges)}"]

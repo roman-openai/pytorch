@@ -144,8 +144,8 @@ new_local_repository(
 
 new_local_repository(
     name = "asmjit",
-    build_file = "//third_party:fbgemm/external/asmjit.BUILD",
-    path = "third_party/fbgemm/external/asmjit",
+    build_file = "//third_party:fbgemm/third_party/asmjit.BUILD",
+    path = "third_party/fbgemm/third_party/asmjit",
 )
 
 new_local_repository(
@@ -182,12 +182,6 @@ new_local_repository(
     name = "nlohmann",
     build_file = "//third_party:nlohmann.BUILD",
     path = "third_party/nlohmann",
-)
-
-new_local_repository(
-    name = "moodycamel",
-    build_file = "//third_party:moodycamel.BUILD",
-    path = "third_party/concurrentqueue",
 )
 
 new_local_repository(

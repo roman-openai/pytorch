@@ -48,6 +48,7 @@ from ..source import (
     FSDPNNModuleSource,
     GetItemSource,
     NNModuleSource,
+    UnspecializedBuiltinNNModuleSource,
     UnspecializedNNModuleSource,
 )
 from ..utils import (
@@ -246,7 +247,7 @@ class NNModuleVariable(VariableTracker):
 
         if object_has_getattribute(base):
             unimplemented_v2(
-                gb_type="Custom __getattribute__ in nn.Module dict key check",
+                gb_type="torch.nn.Module with a custom __getattribute__ defined",
                 context=f"has_key_in_generic_dict {self} {key}",
                 explanation="Dynamo does not support checking key existence "
                 "on `nn.Module` instances that have a custom "
@@ -268,7 +269,7 @@ class NNModuleVariable(VariableTracker):
         """Check for a __getattr__ and handle it specially if it is implemented"""
         if object_has_getattribute(base):
             unimplemented_v2(
-                gb_type="Custom __getattribute__ in nn.Module attribute access",
+                gb_type="torch.nn.Module with a custom __getattribute__ defined",
                 context=f"var_getattr {self} {name}",
                 explanation="Dynamo does not support checking key existence "
                 "on `nn.Module` instances that have a custom "
@@ -890,7 +891,8 @@ class UnspecializedNNModuleVariable(UserDefinedObjectVariable):
         self.nn_module_stack_source = self.source
 
     def _wrap_source(self, attr_source):
-        # the vt is already wrapped with UnspecializedNNModuleSource
+        if not isinstance(attr_source, UnspecializedNNModuleSource):
+            return UnspecializedNNModuleSource(attr_source)
         return attr_source
 
     def get_nn_module_stack_source(self):
@@ -1191,7 +1193,8 @@ class UnspecializedBuiltinNNModuleVariable(UnspecializedNNModuleVariable):
     """
 
     def _wrap_source(self, attr_source):
-        # vt is already wrapped with the UnspecializedBuiltinNNModuleSource
+        if not isinstance(attr_source, UnspecializedBuiltinNNModuleSource):
+            return UnspecializedBuiltinNNModuleSource(attr_source)
         return attr_source
 
 

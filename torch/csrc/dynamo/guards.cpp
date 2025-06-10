@@ -844,38 +844,21 @@ static PyObject* assert_size_stride(PyObject* dummy, PyObject* args) {
   PyObject* item = nullptr;
   PyObject* size = nullptr;
   PyObject* stride = nullptr;
-  const char* op_name = nullptr;
-
-  if (!PyArg_ParseTuple(args, "OOO|s", &item, &size, &stride, &op_name)) {
+  if (!PyArg_ParseTuple(args, "OOO", &item, &size, &stride)) {
     return nullptr;
   }
   if (!THPVariable_CheckExact(item) && !THPVariable_Check(item)) {
-    std::stringstream msg;
-    msg << "expected Tensor()";
-    if (op_name) {
-      msg << " for op: " << op_name;
-    }
-    PyErr_SetString(PyExc_TypeError, msg.str().c_str());
+    PyErr_SetString(PyExc_TypeError, "expected Tensor()");
     return nullptr;
   }
   if (!PyTuple_CheckExact(size) || !PyTuple_CheckExact(stride)) {
-    std::stringstream msg;
-    msg << "expected tuple()";
-    if (op_name) {
-      msg << " for op: " << op_name;
-    }
-    PyErr_SetString(PyExc_TypeError, msg.str().c_str());
+    PyErr_SetString(PyExc_TypeError, "expected tuple()");
     return nullptr;
   }
   at::Tensor tensor = THPVariable_Unpack(item);
   int64_t ndim = tensor.ndimension();
   if (PyTuple_GET_SIZE(size) != ndim || PyTuple_GET_SIZE(stride) != ndim) {
-    std::stringstream msg;
-    msg << "wrong number of dimensions" << ndim;
-    if (op_name) {
-      msg << " for op: " << op_name;
-    }
-    PyErr_SetString(PyExc_AssertionError, msg.str().c_str());
+    PyErr_SetString(PyExc_AssertionError, "wrong number of dimensions");
     return nullptr;
   }
 
@@ -904,9 +887,6 @@ static PyObject* assert_size_stride(PyObject* dummy, PyObject* args) {
   }
 
   if (num_errors) {
-    if (op_name) {
-      msg << "\nError in op: " << op_name;
-    }
     msg << "\nThis error most often comes from a incorrect fake (aka meta) kernel for a custom op.";
     msg << "\nUse torch.library.opcheck to test your custom op.";
     msg << "\nSee https://pytorch.org/docs/stable/library.html#torch.library.opcheck";
@@ -924,27 +904,15 @@ static PyObject* assert_alignment(PyObject* dummy, PyObject* args) {
    */
   PyObject* item = nullptr;
   unsigned long alignment = 0;
-  const char* op_name = nullptr;
-
-  if (!PyArg_ParseTuple(args, "Ok|s", &item, &alignment, &op_name)) {
+  if (!PyArg_ParseTuple(args, "Ok", &item, &alignment)) {
     return nullptr;
   }
   if (!THPVariable_CheckExact(item) && !THPVariable_Check(item)) {
-    std::stringstream msg;
-    msg << "expected Tensor()";
-    if (op_name) {
-      msg << " for op: " << op_name;
-    }
-    PyErr_SetString(PyExc_TypeError, msg.str().c_str());
+    PyErr_SetString(PyExc_TypeError, "expected Tensor()");
     return nullptr;
   }
   if (alignment == 0) {
-    std::stringstream msg;
-    msg << "alignment cannot be 0";
-    if (op_name) {
-      msg << " in op: " << op_name;
-    }
-    PyErr_SetString(PyExc_AssertionError, msg.str().c_str());
+    PyErr_SetString(PyExc_AssertionError, "alignment can not be 0");
     return nullptr;
   }
 
@@ -954,10 +922,7 @@ static PyObject* assert_alignment(PyObject* dummy, PyObject* args) {
   size_t itemsize = tensor.itemsize();
   if (storage_offset * itemsize % alignment != 0) {
     std::stringstream msg;
-    if (op_name) {
-      msg << "\nError in op: " << op_name;
-    }
-    msg << "\nExpect the tensor to be " << alignment
+    msg << "Expect the tensor to be " << alignment
         << " bytes aligned. Fail due to storage_offset=" << storage_offset
         << " itemsize=" << itemsize;
     PyErr_SetString(PyExc_AssertionError, msg.str().c_str());
@@ -5311,40 +5276,23 @@ void install_storage_overlapping_guard(
       /* overlapping= */ false);
 }
 
-char flush_cache_by_eviction() {
-  constexpr size_t evict_size = 32 * 1024 * 1024;
-  std::vector<char> buffer(evict_size, 1);
-
-  volatile char sink = 0;
-  for (size_t i = 0; i < buffer.size(); i += 64) {
-    sink ^= buffer[i];
-  }
-  return sink;
-}
-
 double profile_guard_manager(
     RootGuardManager* root,
     py::object f_locals,
     int n_iters) {
   PyObject* locals = f_locals.ptr();
 
-  // Warmup to setup fast paths (like dict_tags) for the actual profiling
+  // Warmup
   for (int i = 0; i < 5; i++) {
     root->check_nopybind(locals);
   }
 
-  std::chrono::duration<double> total_elapsed{0.0};
+  auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < n_iters; i++) {
-    // Flush the caches to accurately measure the overhead
-    // store into a volatile to prevent optimization
-    volatile char dummy = flush_cache_by_eviction();
-    (void)dummy;
-
-    auto start = std::chrono::high_resolution_clock::now();
     root->check_nopybind(locals);
-    auto end = std::chrono::high_resolution_clock::now();
-    total_elapsed += end - start;
   }
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> total_elapsed = end - start;
 
   // Calculate the average time per iteration in microseconds
   return (total_elapsed.count() * 1e6) / n_iters;

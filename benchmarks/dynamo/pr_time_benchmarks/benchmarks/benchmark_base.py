@@ -247,10 +247,7 @@ class BenchmarkBase(ABC):
                     instruction_count=r,
                 )
         if self._enable_compile_time_instruction_count:
-            # enable_cpp_symbolic_shape_guards has impact on these benchmarks
-            # Keep using False value for consistency.
-            with config.patch("enable_cpp_symbolic_shape_guards", False):
-                r = self._count_compile_time_instructions()
+            r = self._count_compile_time_instructions()
 
             self.results.append(
                 (

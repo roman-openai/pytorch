@@ -272,7 +272,7 @@ static void checkMutableFunctionDefault(
         << "Mutable default parameters are not supported because Python binds them to the function"
         << " and they persist across function calls.\n As a workaround, make the default None and instantiate"
         << " the default parameter within the body of the function. Found "
-        << py::type::handle_of(def_arg) << " on parameter " << arg.name());
+        << def_arg.get_type() << " on parameter " << arg.name());
   }
 }
 
@@ -1430,7 +1430,7 @@ void initJitScriptBindings(PyObject* module) {
               return StrongFunctionPtr(std::move(self), fn);
             } else {
               throw AttributeError(
-                  fmt::format("'CompilationUnit' has no attribute '{}'", name));
+                  "'CompilationUnit' has no attribute '%s'", name.c_str());
             }
           })
       .def(

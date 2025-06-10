@@ -1,5 +1,4 @@
 import copy
-import typing_extensions
 import warnings
 from typing import Any, Optional, Union
 
@@ -19,7 +18,6 @@ from .fx.utils import (  # noqa: F401
     get_skipped_module_name_and_classes,
 )
 from .qconfig_mapping import QConfigMapping
-from .utils import DEPRECATION_WARNING
 
 
 def attach_preserved_attrs_to_model(
@@ -251,7 +249,6 @@ def fuse_fx(
     return graph_module
 
 
-@typing_extensions.deprecated(DEPRECATION_WARNING)
 def prepare_fx(
     model: torch.nn.Module,
     qconfig_mapping: Union[QConfigMapping, dict[str, Any]],
@@ -403,7 +400,6 @@ def prepare_fx(
     )
 
 
-@typing_extensions.deprecated(DEPRECATION_WARNING)
 def prepare_qat_fx(
     model: torch.nn.Module,
     qconfig_mapping: Union[QConfigMapping, dict[str, Any]],
@@ -558,7 +554,6 @@ def _convert_fx(
     return quantized
 
 
-@typing_extensions.deprecated(DEPRECATION_WARNING)
 def convert_fx(
     graph_module: GraphModule,
     convert_custom_config: Union[ConvertCustomConfig, dict[str, Any], None] = None,
