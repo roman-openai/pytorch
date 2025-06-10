@@ -437,11 +437,22 @@ bool same_strides(const Tensor& t1, const Tensor& t2) {
 
 // Whether we will use ragged offsets in the dense (non-nested) path
 // to avoid recompilation
-bool use_ragged_in_dense() {
+bool use_ragged_in_dense(const Tensor& q, const Tensor& k, const Tensor& v, const Tensor& o) {
   static bool flag = c10::utils::check_env("TORCH_CUDNN_SDPA_AVOID_RECOMPILE") == true;
+  if (!flag) {
+    return flag;
+  }
   TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 is currently experimental. "
                   "Please report any issues to https://github.com/pytorch/pytorch/issues.");
-  return flag;
+  bool all_bshd = q.dim() == 4 && q.transpose(1, 2).is_contiguous() &&
+	          k.dim() == 4 && k.transpose(1, 2).is_contiguous() &&
+		  v.dim() == 4 && v.transpose(1, 2).is_contiguous() &&
+		  o.dim() == 4 && o.transpose(1, 2).is_contiguous();
+  if (!all_bshd) {
+    TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 only works with Q, K, V, and output in BSHD memory layout."
+		    "e.g., Q, K, V must be allocated with torch.randn((B, S, H, D).transpose(1, 2)");
+  }
+  return all_bshd;
 }
 } // namespace
 
@@ -491,7 +502,7 @@ auto build_graph(
           .set_is_inference(return_softmaxstats == false)
           .set_causal_mask(is_causal)
           .set_attn_scale(attn_scale);
-  if (use_ragged_in_dense()) {
+  if (use_ragged_in_dense(q, k, v, o)) {
     auto SEQ_LEN_Q_ =
         mha_graph->tensor(fe::graph::Tensor_attributes()
                               .set_uid(SEQ_LEN_Q)
@@ -572,7 +583,7 @@ auto build_graph(
     Stats->set_uid(LSE);
     Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
   }
-  if (use_ragged_in_dense()) {
+  if (use_ragged_in_dense(q, k, v, o)) {
     auto RAG_Q_OFF_ =
         mha_graph->tensor(fe::graph::Tensor_attributes()
                               .set_uid(RAG_Q_OFF)
@@ -1237,7 +1248,7 @@ void run_cudnn_SDP_fprop(
     softmaxstats = at::empty({b, h, s_q}, q.options().dtype(kFloat));
   }
 
-  if (use_ragged_in_dense()) {
+  if (use_ragged_in_dense(q, k, v, o)) {
     seqlen_q = at::full({b, 1, 1, 1}, s_q, q.options().dtype(kInt));
     seqlen_kv = at::full({b, 1, 1, 1}, s_kv, q.options().dtype(kInt));
     auto cum_seqlen_q = at::full({b + 1, 1, 1, 1}, s_q, q.options().dtype(kInt)).cumsum(0, kInt).add_(-s_q);
@@ -1249,10 +1260,6 @@ void run_cudnn_SDP_fprop(
     if (return_softmaxstats) {
       rag_off_lse = cum_seqlen_q.mul(softmaxstats.stride(-1));
     }
-    TORCH_WARN(seqlen_q, cum_seqlen_q, rag_off_q);
-    TORCH_WARN(seqlen_kv, cum_seqlen_kv, rag_off_k);
-    TORCH_WARN(cum_seqlen_q.dtype() == kInt, rag_off_q.dtype() == kInt);
-    TORCH_WARN(cum_seqlen_q.dtype() == kLong, rag_off_q.dtype() == kLong);
   }
 
   const auto dprops = at::cuda::getCurrentDeviceProperties();
@@ -1322,7 +1329,7 @@ void run_cudnn_SDP_fprop(
     variant_pack[SEED] = _dropoutseed.data_ptr();
     variant_pack[OFFSET] = _dropoutoffset.data_ptr();
   }
-  if (use_ragged_in_dense()) {
+  if (use_ragged_in_dense(q, k, v, o)) {
     variant_pack[SEQ_LEN_Q] = seqlen_q.data_ptr();
     variant_pack[SEQ_LEN_KV] = seqlen_kv.data_ptr();
     variant_pack[RAG_Q_OFF] = rag_off_q.data_ptr();
