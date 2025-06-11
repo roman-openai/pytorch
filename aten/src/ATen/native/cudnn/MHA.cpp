@@ -273,6 +273,9 @@ void setMHAParams(
     // fix seqlen to rounded value
     params.s_q = roundup_power2(params.s_q);
     params.s_kv = roundup_power2(params.s_kv);
+    params.q_dim[2] = roundup_power2(params.q_dim[2]);
+    params.k_dim[2] = roundup_power2(params.k_dim[2]);
+    params.v_dim[2] = roundup_power2(params.v_dim[2]);
   }
   // uninit is OK as the struct is memset 0'd
   if (params.has_attn_bias) {
@@ -330,16 +333,16 @@ struct MHAGraphCache {
   // pointer to the Execution Plan if we know it will not be invalidated by
   // another thread
   T* find(const KeyType& key) {
+    static bool flag = c10::utils::check_env("TORCH_CUDNN_SDPA_CACHE_DEBUG") == true;
+    if (flag && count) {
+      TORCH_WARN("SDPA Cache Called ", count, " times. Hit rate: ", 100*hits/count, "%");
+    }
     count++;
     auto it = engine_cache.find(key);
     if (it == engine_cache.end()) {
       return nullptr;
     }
     hits++;
-    static bool flag = c10::utils::check_env("TORCH_CUDNN_SDPA_CACHE_DEBUG") == true;
-    if (flag) {
-      TORCH_WARN("SDPA Cache Called ", count, " times. Hit rate: ", 100*hits/count, "%");
-    }
     return &(it->second);
   }
 
@@ -658,12 +661,12 @@ auto build_graph(
     K_->set_ragged_offset(RAG_K_OFF_);
     V_->set_ragged_offset(RAG_V_OFF_);
     auto qsizevec = q.sizes().vec();
-    auto ksizevec = v.sizes().vec();
-    auto vsizevec = k.sizes().vec();
+    auto ksizevec = k.sizes().vec();
+    auto vsizevec = v.sizes().vec();
     auto osizevec = o.sizes().vec();
     qsizevec[2] = roundup_power2(qsizevec[2]);
     ksizevec[2] = roundup_power2(ksizevec[2]);
-    qsizevec[2] = roundup_power2(qsizevec[2]);
+    vsizevec[2] = roundup_power2(vsizevec[2]);
     osizevec[2] = roundup_power2(osizevec[2]);
     Q_->set_dim(qsizevec);
     K_->set_dim(ksizevec);
