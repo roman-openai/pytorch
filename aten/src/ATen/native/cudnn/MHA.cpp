@@ -592,7 +592,7 @@ auto build_graph(
 
 
   if (Stats) {
-    Stats->set_uid(LSE).set_output(true).set_data_type(fe::DataType_t::FLOAT).set_dim(softmaxstats.sizes().vec()).set_stride(softmaxstats.strides().vec());
+    Stats->set_uid(LSE).set_output(true).set_data_type(fe::DataType_t::FLOAT).set_stride(softmaxstats.strides().vec());
   }
   if (use_ragged_in_dense(q, k, v, o)) {
     auto RAG_Q_OFF_ =
@@ -634,9 +634,6 @@ auto build_graph(
     Q_->set_ragged_offset(RAG_Q_OFF_);
     K_->set_ragged_offset(RAG_K_OFF_);
     V_->set_ragged_offset(RAG_V_OFF_);
-    if (Stats) {
-      Stats->set_ragged_offset(RAG_STATS_OFF_);
-    }
     auto qsizevec = q.sizes().vec();
     auto ksizevec = v.sizes().vec();
     auto vsizevec = k.sizes().vec();
@@ -649,13 +646,21 @@ auto build_graph(
     K_->set_dim(ksizevec);
     V_->set_dim(vsizevec);
     O_->set_dim(osizevec);
+    if (Stats) {
+      Stats->set_ragged_offset(RAG_STATS_OFF_);
+      auto statssizevec = softmaxstats.sizes().vec();
+      statssizevec[2] = roundup_power2(statssizevec[2]);
+      Stats->set_dim(statssizevec);
+    }
   } else {
     Q_->set_dim(q.sizes().vec());
     K_->set_dim(k.sizes().vec());
     V_->set_dim(v.sizes().vec());
     O_->set_dim(o.sizes().vec());
+    if (Stats) {
+      Stats->set_dim(softmaxstats.sizes().vec());
+    }
   }
-
 
   AT_CUDNN_FRONTEND_CHECK(mha_graph->validate());
   AT_CUDNN_FRONTEND_CHECK(mha_graph->build_operation_graph(handle));
