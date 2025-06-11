@@ -144,6 +144,47 @@ namespace fe = cudnn_frontend;
 
 #define MAX_MHA_DIM 4
 
+// Whether we will use ragged offsets in the dense (non-nested) path
+// to avoid recompilation
+bool use_ragged_in_dense(const Tensor& q, const Tensor& k, const Tensor& v, const Tensor& o, bool has_bias) {
+  static bool flag = c10::utils::check_env("TORCH_CUDNN_SDPA_AVOID_RECOMPILE") == true;
+  if (!flag) {
+    return flag;
+  }
+  TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 is currently experimental. "
+                  "Please report any issues to https://github.com/pytorch/pytorch/issues.");
+  if (has_bias) {
+    TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 only works without bias."
+		    "Consider using the is_causal hint instead of bias for causal masking."
+		    "Falling back to regular dense case, which may trigger excessive recompilation.");
+    return !has_bias;
+  }
+  bool all_bshd = q.dim() == 4 && q.transpose(1, 2).is_contiguous() &&
+	          k.dim() == 4 && k.transpose(1, 2).is_contiguous() &&
+		  v.dim() == 4 && v.transpose(1, 2).is_contiguous() &&
+		  o.dim() == 4 && o.transpose(1, 2).is_contiguous();
+  if (!all_bshd) {
+    TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 only works with Q, K, V, and output in BSHD memory layout,"
+		    "e.g., Q, K, V must be allocated with torch.randn((B, S, H, D).transpose(1, 2)."
+		    "Falling back to regualr dense case, which may trigger excessive recompilation.");
+  }
+  return all_bshd;
+}
+
+int roundup_power2(int dim) {
+    if (!dim) {
+      return 1;
+    }
+    dim--;
+    dim |= dim >> 1;
+    dim |= dim >> 2;
+    dim |= dim >> 4;
+    dim |= dim >> 8;
+    dim |= dim >> 16;
+    dim++;
+    return dim;
+}
+
 struct MHAParams {
   c10::DeviceIndex device_id;
   fe::DataType_t dataType;
@@ -224,6 +265,15 @@ void setMHAParams(
   std::copy(k.strides().begin(), k.strides().end(), params.k_stride.begin());
   std::copy(v.sizes().begin(), v.sizes().end(), params.v_dim.begin());
   std::copy(v.strides().begin(), v.strides().end(), params.v_stride.begin());
+  if (use_ragged_in_dense(q, k, v, q, params.has_attn_bias)) {
+    // ignore B - stride in BSHD (THD) avoid-recompile
+    params.q_stride[0] = INT_MAX;
+    params.k_stride[0] = INT_MAX;
+    params.v_stride[0] = INT_MAX;
+    // fix seqlen to rounded value
+    params.s_q = roundup_power2(params.s_q);
+    params.s_kv = roundup_power2(params.s_kv);
+  }
   // uninit is OK as the struct is memset 0'd
   if (params.has_attn_bias) {
     std::copy(
@@ -273,14 +323,22 @@ struct MHACacheKeyWrapper : ParamsWrapper<MHAParams> {
 template <typename T, typename KeyType>
 struct MHAGraphCache {
   std::unordered_map<KeyType, T, ParamsWrapperHash<KeyType>> engine_cache;
+  int count = 0;;
+  int hits = 0;
 
   // no mutexes here as caches are now thread local for v8, can also return a
   // pointer to the Execution Plan if we know it will not be invalidated by
   // another thread
   T* find(const KeyType& key) {
+    count++;
     auto it = engine_cache.find(key);
     if (it == engine_cache.end()) {
       return nullptr;
+    }
+    hits++;
+    static bool flag = c10::utils::check_env("TORCH_CUDNN_SDPA_CACHE_DEBUG") == true;
+    if (flag) {
+      TORCH_WARN("SDPA Cache Called ", count, " times. Hit rate: ", 100*hits/count, "%");
     }
     return &(it->second);
   }
@@ -434,41 +492,6 @@ bool same_strides(const Tensor& t1, const Tensor& t2) {
       t2_strides_no_ones.begin(),
       t2_strides_no_ones.end());
 }
-
-// Whether we will use ragged offsets in the dense (non-nested) path
-// to avoid recompilation
-bool use_ragged_in_dense(const Tensor& q, const Tensor& k, const Tensor& v, const Tensor& o) {
-  static bool flag = c10::utils::check_env("TORCH_CUDNN_SDPA_AVOID_RECOMPILE") == true;
-  if (!flag) {
-    return flag;
-  }
-  TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 is currently experimental. "
-                  "Please report any issues to https://github.com/pytorch/pytorch/issues.");
-  bool all_bshd = q.dim() == 4 && q.transpose(1, 2).is_contiguous() &&
-	          k.dim() == 4 && k.transpose(1, 2).is_contiguous() &&
-		  v.dim() == 4 && v.transpose(1, 2).is_contiguous() &&
-		  o.dim() == 4 && o.transpose(1, 2).is_contiguous();
-  if (!all_bshd) {
-    TORCH_WARN_ONCE("TORCH_CUDNN_SDPA_AVOID_RECOMPILE=1 only works with Q, K, V, and output in BSHD memory layout."
-		    "e.g., Q, K, V must be allocated with torch.randn((B, S, H, D).transpose(1, 2)");
-  }
-  return all_bshd;
-}
-
-int roundup_power2(int dim) {
-    if (!dim) {
-      return 1;
-    }
-    dim--;
-    dim |= dim >> 1;
-    dim |= dim >> 2;
-    dim |= dim >> 4;
-    dim |= dim >> 8;
-    dim |= dim >> 16;
-    dim++;
-    return dim;
-}
-
 } // namespace
 
 auto build_graph(
@@ -517,7 +540,7 @@ auto build_graph(
           .set_is_inference(return_softmaxstats == false)
           .set_causal_mask(is_causal)
           .set_attn_scale(attn_scale);
-  if (use_ragged_in_dense(q, k, v, o)) {
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
     auto SEQ_LEN_Q_ =
         mha_graph->tensor(fe::graph::Tensor_attributes()
                               .set_uid(SEQ_LEN_Q)
@@ -594,7 +617,7 @@ auto build_graph(
   if (Stats) {
     Stats->set_uid(LSE).set_output(true).set_data_type(fe::DataType_t::FLOAT).set_stride(softmaxstats.strides().vec());
   }
-  if (use_ragged_in_dense(q, k, v, o)) {
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
     auto RAG_Q_OFF_ =
         mha_graph->tensor(fe::graph::Tensor_attributes()
                               .set_uid(RAG_Q_OFF)
@@ -1281,7 +1304,7 @@ void run_cudnn_SDP_fprop(
     softmaxstats = at::empty({b, s_q, h, 1}, q.options().dtype(kFloat)).transpose(1, 2);
   }
 
-  if (use_ragged_in_dense(q, k, v, o)) {
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
     seqlen_q = at::full({b, 1, 1, 1}, s_q, q.options().dtype(kInt));
     seqlen_kv = at::full({b, 1, 1, 1}, s_kv, q.options().dtype(kInt));
     auto cum_seqlen_q = at::full({b + 1, 1, 1, 1}, s_q, q.options().dtype(kInt)).cumsum(0, kInt).add_(-s_q);
@@ -1306,6 +1329,9 @@ void run_cudnn_SDP_fprop(
 
   cudnnHandle_t handle = getCudnnHandle(); 
 
+  // NB: The key initialization will round up sequence length, stride data etc.
+  // if use_ragged_in_dense is enabled (to allow multiple sequence lenghths to
+  // reuse the same cached value/graph)
   auto key = MHACacheKeyWrapper(
       b,
       h,
@@ -1362,7 +1388,7 @@ void run_cudnn_SDP_fprop(
     variant_pack[SEED] = _dropoutseed.data_ptr();
     variant_pack[OFFSET] = _dropoutoffset.data_ptr();
   }
-  if (use_ragged_in_dense(q, k, v, o)) {
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
     variant_pack[SEQ_LEN_Q] = seqlen_q.data_ptr();
     variant_pack[SEQ_LEN_KV] = seqlen_kv.data_ptr();
     variant_pack[RAG_Q_OFF] = rag_off_q.data_ptr();
