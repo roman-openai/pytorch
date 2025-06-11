@@ -454,6 +454,21 @@ bool use_ragged_in_dense(const Tensor& q, const Tensor& k, const Tensor& v, cons
   }
   return all_bshd;
 }
+
+int roundup_power2(int dim) {
+    if (!dim) {
+      return 1;
+    }
+    dim--;
+    dim |= dim >> 1;
+    dim |= dim >> 2;
+    dim |= dim >> 4;
+    dim |= dim >> 8;
+    dim |= dim >> 16;
+    dim++;
+    return dim;
+}
+
 } // namespace
 
 auto build_graph(
@@ -548,19 +563,16 @@ auto build_graph(
       fe::graph::Tensor_attributes()
           .set_uid(Q)
           .set_name("Q")
-          .set_dim(q.sizes().vec())
           .set_stride(fixSizeOneDimStrideSDPA(q.sizes(), q.strides().vec())));
   auto K_ = mha_graph->tensor(
       fe::graph::Tensor_attributes()
           .set_uid(K)
           .set_name("K")
-          .set_dim(k.sizes().vec())
           .set_stride(fixSizeOneDimStrideSDPA(k.sizes(), k.strides().vec())));
   auto V_ = mha_graph->tensor(
       fe::graph::Tensor_attributes()
           .set_uid(V)
           .set_name("V")
-          .set_dim(v.sizes().vec())
           .set_stride(fixSizeOneDimStrideSDPA(v.sizes(), v.strides().vec())));
   std::optional<std::shared_ptr<fe::graph::Tensor_attributes>> bias;
   if (attn_bias.has_value()) {
@@ -576,12 +588,11 @@ auto build_graph(
   auto [O_, Stats] =
       mha_graph->sdpa(Q_, K_, V_, scaled_dot_product_flash_attention_options);
   O_->set_uid(O);
-  O_->set_output(true).set_dim(o.sizes().vec()).set_stride(o.strides().vec());
+  O_->set_output(true).set_stride(o.strides().vec());
 
 
   if (Stats) {
-    Stats->set_uid(LSE);
-    Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
+    Stats->set_uid(LSE).set_output(true).set_data_type(fe::DataType_t::FLOAT).set_dim(softmaxstats.sizes().vec()).set_stride(softmaxstats.strides().vec());
   }
   if (use_ragged_in_dense(q, k, v, o)) {
     auto RAG_Q_OFF_ =
@@ -626,6 +637,23 @@ auto build_graph(
     if (Stats) {
       Stats->set_ragged_offset(RAG_STATS_OFF_);
     }
+    auto qsizevec = q.sizes().vec();
+    auto ksizevec = v.sizes().vec();
+    auto vsizevec = k.sizes().vec();
+    auto osizevec = o.sizes().vec();
+    qsizevec[2] = roundup_power2(qsizevec[2]);
+    ksizevec[2] = roundup_power2(ksizevec[2]);
+    qsizevec[2] = roundup_power2(qsizevec[2]);
+    osizevec[2] = roundup_power2(osizevec[2]);
+    Q_->set_dim(qsizevec);
+    K_->set_dim(ksizevec);
+    V_->set_dim(vsizevec);
+    O_->set_dim(osizevec);
+  } else {
+    Q_->set_dim(q.sizes().vec());
+    K_->set_dim(k.sizes().vec());
+    V_->set_dim(v.sizes().vec());
+    O_->set_dim(o.sizes().vec());
   }
 
 
@@ -1245,7 +1273,7 @@ void run_cudnn_SDP_fprop(
   }
   if (return_softmaxstats && !softmaxstats.defined()) {
     // TODO(eqy): verify that this is correct
-    softmaxstats = at::empty({b, h, s_q}, q.options().dtype(kFloat));
+    softmaxstats = at::empty({b, s_q, h, 1}, q.options().dtype(kFloat)).transpose(1, 2);
   }
 
   if (use_ragged_in_dense(q, k, v, o)) {
@@ -1258,7 +1286,7 @@ void run_cudnn_SDP_fprop(
     rag_off_v = cum_seqlen_kv.mul(v.stride(-2));
     rag_off_o = cum_seqlen_q.mul(o.stride(-2));
     if (return_softmaxstats) {
-      rag_off_lse = cum_seqlen_q.mul(softmaxstats.stride(-1));
+      rag_off_lse = cum_seqlen_q.mul(softmaxstats.stride(-2));
     }
   }
 
