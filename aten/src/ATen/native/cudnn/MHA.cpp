@@ -949,21 +949,39 @@ auto build_graph_backward(
                                    .set_name("CUDNN_SDPA_BACKWARD")
                                    .set_causal_mask(is_causal)
                                    .set_attn_scale(attn_scale);
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
+    auto SEQ_LEN_Q_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(SEQ_LEN_Q)
+                              .set_name("Seq_q")
+                              .set_dim({b, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto SEQ_LEN_KV_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(SEQ_LEN_KV)
+                              .set_name("Seq_kv")
+                              .set_dim({b, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+   sdpa_backward_options
+          .set_seq_len_q(SEQ_LEN_Q_)
+          .set_seq_len_kv(SEQ_LEN_KV_)
+          .set_padding_mask(true);
+  }
+
   auto Q_ = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(Q)
                                   .set_name("Q")
-                                  .set_dim(q.sizes().vec())
                                   .set_stride(q.strides().vec()));
   auto K_ = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(K)
                                   .set_name("K")
-                                  .set_dim(k.sizes().vec())
-                                  .set_stride(k.strides().vec()));
+				  .set_stride(k.strides().vec()));
   auto V_ = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(V)
                                   .set_name("V")
-                                  .set_dim(v.sizes().vec())
-                                  .set_stride(v.strides().vec()));
+			          .set_stride(v.strides().vec()));
   std::optional<std::shared_ptr<fe::graph::Tensor_attributes>> bias;
   if (attn_bias.has_value()) {
     bias =
@@ -999,27 +1017,102 @@ auto build_graph_backward(
   auto O_ = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(O)
                                   .set_name("O")
-                                  .set_dim(o.sizes().vec())
                                   .set_stride(o.strides().vec()));
   auto Stats = mha_graph->tensor(fe::graph::Tensor_attributes()
                                      .set_uid(LSE)
                                      .set_name("Stats")
-                                     .set_dim(softmaxstats.sizes().vec())
                                      .set_stride(softmaxstats.strides().vec())
                                      .set_data_type(fe::DataType_t::FLOAT));
   auto Do = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(DO)
                                   .set_name("DO")
-                                  .set_dim(dO.sizes().vec())
                                   .set_stride(dO.strides().vec()));
   auto [Dq, Dk, Dv] = mha_graph->sdpa_backward(
       Q_, K_, V_, O_, Do, Stats, sdpa_backward_options);
   Dq->set_uid(DQ);
-  Dq->set_output(true).set_dim(dQ.sizes().vec()).set_stride(dQ.strides().vec());
+  Dq->set_output(true).set_stride(dQ.strides().vec());
   Dk->set_uid(DK);
-  Dk->set_output(true).set_dim(dK.sizes().vec()).set_stride(dK.strides().vec());
+  Dk->set_output(true).set_stride(dK.strides().vec());
   Dv->set_uid(DV);
-  Dv->set_output(true).set_dim(dV.sizes().vec()).set_stride(dV.strides().vec());
+  Dv->set_output(true).set_stride(dV.strides().vec());
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
+    auto RAG_Q_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_Q_OFF)
+                              .set_name("cum_seq_q")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_K_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_K_OFF)
+                              .set_name("cum_seq_k")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_V_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_V_OFF)
+                              .set_name("cum_seq_v")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_O_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_O_OFF)
+                              .set_name("cum_seq_o")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    auto RAG_STATS_OFF_ =
+        mha_graph->tensor(fe::graph::Tensor_attributes()
+                              .set_uid(RAG_LSE_OFF)
+                              .set_name("cum_seq_stats")
+                              .set_dim({b + 1, 1, 1, 1})
+                              .set_stride({1, 1, 1, 1})
+                              .set_data_type(fe::DataType_t::INT32));
+    O_->set_ragged_offset(RAG_O_OFF_);
+    Q_->set_ragged_offset(RAG_Q_OFF_);
+    K_->set_ragged_offset(RAG_K_OFF_);
+    V_->set_ragged_offset(RAG_V_OFF_);
+    Dq->set_ragged_offset(RAG_Q_OFF_);
+    Dk->set_ragged_offset(RAG_K_OFF_);
+    Dv->set_ragged_offset(RAG_V_OFF_);
+    Do->set_ragged_offset(RAG_O_OFF_);
+    auto qsizevec = q.sizes().vec();
+    auto ksizevec = k.sizes().vec();
+    auto vsizevec = v.sizes().vec();
+    auto osizevec = o.sizes().vec();
+    qsizevec[2] = roundup_power2(qsizevec[2]);
+    ksizevec[2] = roundup_power2(ksizevec[2]);
+    vsizevec[2] = roundup_power2(vsizevec[2]);
+    osizevec[2] = roundup_power2(osizevec[2]);
+    Q_->set_dim(qsizevec);
+    K_->set_dim(ksizevec);
+    V_->set_dim(vsizevec);
+    O_->set_dim(osizevec);
+    // should be identical to their non-d counterparts
+    Dq->set_dim(qsizevec);
+    Dk->set_dim(ksizevec);
+    Dv->set_dim(vsizevec);
+    Do->set_dim(osizevec);
+
+    Stats->set_ragged_offset(RAG_STATS_OFF_);
+    auto statssizevec = softmaxstats.sizes().vec();
+    statssizevec[2] = roundup_power2(statssizevec[2]);
+    Stats->set_dim(statssizevec);
+  } else {
+    O_->set_dim(o.sizes().vec());
+    Q_->set_dim(q.sizes().vec());
+    K_->set_dim(k.sizes().vec());
+    V_->set_dim(v.sizes().vec());
+    Dq->set_dim(dQ.sizes().vec());
+    Dk->set_dim(dK.sizes().vec());
+    Dv->set_dim(dV.sizes().vec());
+    Do->set_dim(dO.sizes().vec());
+    Stats->set_dim(softmaxstats.sizes().vec());
+  }
+
   AT_CUDNN_FRONTEND_CHECK(mha_graph->validate());
   AT_CUDNN_FRONTEND_CHECK(mha_graph->build_operation_graph(handle));
   AT_CUDNN_FRONTEND_CHECK(
@@ -1533,6 +1626,9 @@ void run_cudnn_SDP_bprop(
       !softmaxstats.numel()) {
     return;
   }
+  Tensor seqlen_q, seqlen_kv;
+  Tensor rag_off_q, rag_off_k, rag_off_v, rag_off_o, rag_off_lse;
+
   auto dprops = at::cuda::getCurrentDeviceProperties();
   auto _dropoutseed = dropoutseed;
   auto _dropoutoffset = dropoutoffset;
@@ -1559,10 +1655,22 @@ void run_cudnn_SDP_bprop(
       "with matching strides...");
 #else
   const auto innermost_dO_stride = dO.strides()[dO.strides().size() - 1];
-  if (innermost_dO_stride != 1) {
+  if (innermost_dO_stride != 1 || use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
     permute_to_matching_layout(o, dO_);
   }
 #endif
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
+    seqlen_q = at::full({b, 1, 1, 1}, s_q, q.options().dtype(kInt));
+    seqlen_kv = at::full({b, 1, 1, 1}, s_kv, q.options().dtype(kInt));
+    auto cum_seqlen_q = at::full({b + 1, 1, 1, 1}, s_q, q.options().dtype(kInt)).cumsum(0, kInt).add_(-s_q);
+    auto cum_seqlen_kv = at::full({b + 1, 1, 1, 1}, s_kv, q.options().dtype(kInt)).cumsum(0, kInt).add_(-s_kv);
+    rag_off_q = cum_seqlen_q.mul(q.stride(-2));
+    rag_off_k = cum_seqlen_kv.mul(k.stride(-2));
+    rag_off_v = cum_seqlen_kv.mul(v.stride(-2));
+    rag_off_o = cum_seqlen_q.mul(o.stride(-2));
+    rag_off_lse = cum_seqlen_q.mul(softmaxstats.stride(-2));
+  }
+
   cudnnHandle_t handle = getCudnnHandle();
   auto key = MHACacheKeyWrapper(
       b,
@@ -1627,6 +1735,16 @@ void run_cudnn_SDP_bprop(
   if (attn_bias.has_value()) {
     variant_pack[BIAS] = attn_bias.value().data_ptr();
   }
+  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
+    variant_pack[SEQ_LEN_Q] = seqlen_q.data_ptr();
+    variant_pack[SEQ_LEN_KV] = seqlen_kv.data_ptr();
+    variant_pack[RAG_Q_OFF] = rag_off_q.data_ptr();
+    variant_pack[RAG_K_OFF] = rag_off_k.data_ptr();
+    variant_pack[RAG_V_OFF] = rag_off_v.data_ptr();
+    variant_pack[RAG_O_OFF] = rag_off_o.data_ptr();
+    variant_pack[RAG_LSE_OFF] = rag_off_lse.data_ptr();
+  }
+
   auto workspace_size = mha_graph->get_workspace_size();
   auto workspace_ptr =
       c10::cuda::CUDACachingAllocator::get()->allocate(workspace_size);
