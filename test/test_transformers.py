@@ -3456,7 +3456,7 @@ class TestSDPACudaOnly(NNTestCase):
     @parametrize("head_dim", [8, 203, 256])
     @parametrize("is_causal", [False])
     @parametrize("dropout_p", [0.22])
-    @parametrize("dtype", [torch.bfloat16])
+    @parametrize("dtype", [torch.float16, torch.bfloat16])
     @parametrize("scale", [None])
     @parametrize("enable_gqa", [True])
     @parametrize("n_heads", [[1, 1]])
