@@ -36,6 +36,9 @@ runs:
       run: |
         set +e
         set -x
+        pwd
+        export DESIRED_PYTHON=3.9
+        .ci/pytorch/windows/internal/install_python.bat
 
         PYTHON3=$(${CONDA_RUN} which python3)
         EXIT_CODE=$?
