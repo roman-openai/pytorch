@@ -6,8 +6,7 @@ if "%DESIRED_PYTHON%" == "3.13t" (
     set ADDITIONAL_OPTIONS="Include_freethreaded=1"
     set PYTHON_EXEC="python3.13t"
 ) else (
-    set DESIRED_PYTHON=3.9
-    echo DESIRED_PYTHON not defined, Python version is set to %DESIRED_PYTHON%
+    echo Python version is set to %DESIRED_PYTHON%
     set "PYTHON_INSTALLER_URL=https://www.python.org/ftp/python/%DESIRED_PYTHON%.0/python-%DESIRED_PYTHON%.0-amd64.exe" %= @lint-ignore =%
 )
 
@@ -15,7 +14,7 @@ del python-amd64.exe
 curl --retry 3 -kL "%PYTHON_INSTALLER_URL%" --output python-amd64.exe
 if errorlevel 1 exit /b 1
 
-start /wait "" python-amd64.exe InstallAllUsers=1 PrependPath=0 Include_test=0 %ADDITIONAL_OPTIONS% TargetDir=%CD%\Python
+start /wait "" python-amd64.exe /quiet InstallAllUsers=1 PrependPath=0 Include_test=0 %ADDITIONAL_OPTIONS% TargetDir=%CD%\Python
 if errorlevel 1 exit /b 1
 
 setx "PATH=%CD%\Python\Scripts;%CD%\Python;%PATH%"
