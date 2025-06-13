@@ -38,7 +38,7 @@ runs:
         set -x
         export DESIRED_PYTHON=3.9
         .ci/pytorch/windows/internal/install_python.bat
-        export PATH=$(pwd)\Python\Scripts;$(pwd)\Python;$(pwd)"
+        export PATH="$(pwd)\Python\Scripts;$(pwd)\Python;$(pwd)"
         export PYTHON_PATH="$(pwd)\Python"
 
     - name: Get temporary directory used by Windows Python
