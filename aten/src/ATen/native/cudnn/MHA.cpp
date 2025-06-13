@@ -168,6 +168,7 @@ bool use_ragged_in_dense(const Tensor& q, const Tensor& k, const Tensor& v, cons
 		    "e.g., Q, K, V must be allocated with torch.randn((B, S, H, D).transpose(1, 2)."
 		    "Falling back to regualr dense case, which may trigger excessive recompilation.");
   }
+  TORCH_WARN("USE RAGGED IN DENSE? ", all_bshd ? "TRUE" : "FALSE");
   return all_bshd;
 }
 
@@ -208,6 +209,7 @@ struct MHAParams {
   // might be redundant if we take 0 dim/stride
   // as signaling no-bias
   bool has_attn_bias;
+  bool use_ragged;
 };
 
 void setMHAParams(
@@ -265,7 +267,9 @@ void setMHAParams(
   std::copy(k.strides().begin(), k.strides().end(), params.k_stride.begin());
   std::copy(v.sizes().begin(), v.sizes().end(), params.v_dim.begin());
   std::copy(v.strides().begin(), v.strides().end(), params.v_stride.begin());
-  if (use_ragged_in_dense(q, k, v, q, params.has_attn_bias)) {
+  bool use_ragged = use_ragged_in_dense(q, k, v, q, params.has_attn_bias);
+  params.use_ragged = use_ragged;
+  if (use_ragged) {
     // ignore B - stride in BSHD (THD) avoid-recompile
     params.q_stride[0] = INT_MAX;
     params.k_stride[0] = INT_MAX;
@@ -588,18 +592,15 @@ auto build_graph(
   auto Q_ = mha_graph->tensor(
       fe::graph::Tensor_attributes()
           .set_uid(Q)
-          .set_name("Q")
-          .set_stride(fixSizeOneDimStrideSDPA(q.sizes(), q.strides().vec())));
+          .set_name("Q"));
   auto K_ = mha_graph->tensor(
       fe::graph::Tensor_attributes()
           .set_uid(K)
-          .set_name("K")
-          .set_stride(fixSizeOneDimStrideSDPA(k.sizes(), k.strides().vec())));
+          .set_name("K"));
   auto V_ = mha_graph->tensor(
       fe::graph::Tensor_attributes()
           .set_uid(V)
-          .set_name("V")
-          .set_stride(fixSizeOneDimStrideSDPA(v.sizes(), v.strides().vec())));
+          .set_name("V"));
   std::optional<std::shared_ptr<fe::graph::Tensor_attributes>> bias;
   if (attn_bias.has_value()) {
     bias =
@@ -613,8 +614,7 @@ auto build_graph(
 
   auto [O_, Stats] =
       mha_graph->sdpa(Q_, K_, V_, scaled_dot_product_flash_attention_options);
-  O_->set_uid(O);
-  O_->set_output(true).set_stride(o.strides().vec());
+  O_->set_uid(O).set_output(true);
 
 
   if (Stats) {
@@ -668,10 +668,14 @@ auto build_graph(
     ksizevec[2] = roundup_power2(ksizevec[2]);
     vsizevec[2] = roundup_power2(vsizevec[2]);
     osizevec[2] = roundup_power2(osizevec[2]);
-    Q_->set_dim(qsizevec);
-    K_->set_dim(ksizevec);
-    V_->set_dim(vsizevec);
-    O_->set_dim(osizevec);
+    // we checked for BSHD contig., set fake strides as cuDNN will complain
+    // if e.g., a ragged dim is smaller than a non-ragged one:
+    // consider HBSD tensor where H is 1
+    Q_->set_dim(qsizevec).set_stride({INT_MAX, qsizevec[3], qsizevec[1]*qsizevec[3], 1});
+    K_->set_dim(ksizevec).set_stride({INT_MAX, ksizevec[3], ksizevec[1]*ksizevec[3], 1});
+    V_->set_dim(vsizevec).set_stride({INT_MAX, vsizevec[3], vsizevec[1]*vsizevec[3], 1});
+    O_->set_dim(osizevec).set_stride({INT_MAX, osizevec[3], osizevec[1]*osizevec[3], 1});
+    TORCH_WARN(fixSizeOneDimStrideSDPA(q.sizes(), q.strides().vec()));
     if (Stats) {
       Stats->set_ragged_offset(RAG_STATS_OFF_);
       auto statssizevec = softmaxstats.sizes().vec();
@@ -679,10 +683,10 @@ auto build_graph(
       Stats->set_dim(statssizevec);
     }
   } else {
-    Q_->set_dim(q.sizes().vec());
-    K_->set_dim(k.sizes().vec());
-    V_->set_dim(v.sizes().vec());
-    O_->set_dim(o.sizes().vec());
+    Q_->set_dim(q.sizes().vec()).set_stride(fixSizeOneDimStrideSDPA(q.sizes(), q.strides().vec()));
+    K_->set_dim(k.sizes().vec()).set_stride(fixSizeOneDimStrideSDPA(k.sizes(), k.strides().vec()));
+    V_->set_dim(v.sizes().vec()).set_stride(fixSizeOneDimStrideSDPA(v.sizes(), v.strides().vec()));
+    O_->set_dim(o.sizes().vec()).set_stride(fixSizeOneDimStrideSDPA(o.sizes(), o.strides().vec()));
     if (Stats) {
       Stats->set_dim(softmaxstats.sizes().vec());
     }
@@ -791,7 +795,7 @@ auto build_graph_nestedtensor(
   auto q_strides = q.strides();
   auto k_strides = k.strides();
   auto v_strides = v.strides();
-  // NB: cuDNN API shape is transposed
+  // NB: cuDNN API shape is transposed: we pass it nominally as HTD
   constexpr int strideidx0 = 1;
   constexpr int strideidx1 = 0;
   constexpr int strideidx2 = 2;
@@ -972,16 +976,13 @@ auto build_graph_backward(
 
   auto Q_ = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(Q)
-                                  .set_name("Q")
-                                  .set_stride(q.strides().vec()));
+                                  .set_name("Q"));
   auto K_ = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(K)
-                                  .set_name("K")
-				  .set_stride(k.strides().vec()));
+                                  .set_name("K"));
   auto V_ = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_uid(V)
-                                  .set_name("V")
-			          .set_stride(v.strides().vec()));
+                                  .set_name("V"));
   std::optional<std::shared_ptr<fe::graph::Tensor_attributes>> bias;
   if (attn_bias.has_value()) {
     bias =
@@ -1014,27 +1015,18 @@ auto build_graph_backward(
     sdpa_backward_options.set_dropout(dropout_probability, seed, offset);
   }
 
-  auto O_ = mha_graph->tensor(fe::graph::Tensor_attributes()
-                                  .set_uid(O)
-                                  .set_name("O")
-                                  .set_stride(o.strides().vec()));
+  auto O_ = mha_graph->tensor(fe::graph::Tensor_attributes().set_uid(O).set_name("O"));
   auto Stats = mha_graph->tensor(fe::graph::Tensor_attributes()
                                      .set_uid(LSE)
                                      .set_name("Stats")
                                      .set_stride(softmaxstats.strides().vec())
                                      .set_data_type(fe::DataType_t::FLOAT));
-  auto Do = mha_graph->tensor(fe::graph::Tensor_attributes()
-                                  .set_uid(DO)
-                                  .set_name("DO")
-                                  .set_stride(dO.strides().vec()));
+  auto Do = mha_graph->tensor(fe::graph::Tensor_attributes().set_uid(DO).set_name("DO"));
   auto [Dq, Dk, Dv] = mha_graph->sdpa_backward(
       Q_, K_, V_, O_, Do, Stats, sdpa_backward_options);
-  Dq->set_uid(DQ);
-  Dq->set_output(true).set_stride(dQ.strides().vec());
-  Dk->set_uid(DK);
-  Dk->set_output(true).set_stride(dK.strides().vec());
-  Dv->set_uid(DV);
-  Dv->set_output(true).set_stride(dV.strides().vec());
+  Dq->set_uid(DQ).set_output(true);
+  Dk->set_uid(DK).set_output(true);
+  Dv->set_uid(DV).set_output(true);
   if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
     auto RAG_Q_OFF_ =
         mha_graph->tensor(fe::graph::Tensor_attributes()
@@ -1087,29 +1079,31 @@ auto build_graph_backward(
     ksizevec[2] = roundup_power2(ksizevec[2]);
     vsizevec[2] = roundup_power2(vsizevec[2]);
     osizevec[2] = roundup_power2(osizevec[2]);
-    Q_->set_dim(qsizevec);
-    K_->set_dim(ksizevec);
-    V_->set_dim(vsizevec);
-    O_->set_dim(osizevec);
+    // see corresponding section in the forward about the hardcoding
+    // of strides here
+    Q_->set_dim(qsizevec).set_stride({INT_MAX, qsizevec[3], qsizevec[1]*qsizevec[3], 1});
+    K_->set_dim(ksizevec).set_stride({INT_MAX, ksizevec[3], ksizevec[1]*ksizevec[3], 1});
+    V_->set_dim(vsizevec).set_stride({INT_MAX, vsizevec[3], vsizevec[1]*vsizevec[3], 1});
+    O_->set_dim(osizevec).set_stride({INT_MAX, osizevec[3], osizevec[1]*osizevec[3], 1});
     // should be identical to their non-d counterparts
-    Dq->set_dim(qsizevec);
-    Dk->set_dim(ksizevec);
-    Dv->set_dim(vsizevec);
-    Do->set_dim(osizevec);
+    Dq->set_dim(qsizevec).set_stride({INT_MAX, qsizevec[3], qsizevec[1]*qsizevec[3], 1});
+    Dk->set_dim(ksizevec).set_stride({INT_MAX, ksizevec[3], ksizevec[1]*ksizevec[3], 1});
+    Dv->set_dim(vsizevec).set_stride({INT_MAX, vsizevec[3], vsizevec[1]*vsizevec[3], 1});
+    Do->set_dim(osizevec).set_stride({INT_MAX, osizevec[3], osizevec[1]*osizevec[3], 1});
 
     Stats->set_ragged_offset(RAG_STATS_OFF_);
     auto statssizevec = softmaxstats.sizes().vec();
     statssizevec[2] = roundup_power2(statssizevec[2]);
     Stats->set_dim(statssizevec);
-  } else {
-    O_->set_dim(o.sizes().vec());
-    Q_->set_dim(q.sizes().vec());
-    K_->set_dim(k.sizes().vec());
-    V_->set_dim(v.sizes().vec());
-    Dq->set_dim(dQ.sizes().vec());
-    Dk->set_dim(dK.sizes().vec());
-    Dv->set_dim(dV.sizes().vec());
-    Do->set_dim(dO.sizes().vec());
+  } else { 
+    O_->set_dim(o.sizes().vec()).set_stride(o.strides().vec());
+    Q_->set_dim(q.sizes().vec()).set_stride(q.strides().vec());
+    K_->set_dim(k.sizes().vec()).set_stride(k.strides().vec());
+    V_->set_dim(v.sizes().vec()).set_stride(v.strides().vec());
+    Dq->set_dim(dQ.sizes().vec()).set_stride(dQ.strides().vec());
+    Dk->set_dim(dK.sizes().vec()).set_stride(dK.strides().vec());
+    Dv->set_dim(dV.sizes().vec()).set_stride(dV.strides().vec());
+    Do->set_dim(dO.sizes().vec()).set_stride(dO.strides().vec());
     Stats->set_dim(softmaxstats.sizes().vec());
   }
 
