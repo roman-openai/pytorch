@@ -36,6 +36,7 @@ runs:
       run: |
         set +e
         set -x
+        export DESIRED_PYTHON=3.9
         .ci/pytorch/windows/internal/install_python.bat
 
         PYTHON3=$(which python3)
