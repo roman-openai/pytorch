@@ -38,33 +38,8 @@ runs:
         set -x
         export DESIRED_PYTHON=3.9
         .ci/pytorch/windows/internal/install_python.bat
-
-        PYTHON3=$(which python3)
-        EXIT_CODE=$?
-
-        if [[ "${EXIT_CODE}" == "0" ]]; then
-          echo "Found Python3 at ${PYTHON3}, adding it into GITHUB_PATH"
-
-          PYTHON_PATH=$(dirname "${PYTHON3}")
-          echo "${PYTHON_PATH}" >> "${GITHUB_PATH}"
-        else
-          PYTHON=$(which python)
-          EXIT_CODE=$?
-
-          if [[ "${EXIT_CODE}" == "0" ]]; then
-            echo "Found Python at ${PYTHON}, set Python3 alias and add it into GITHUB_PATH"
-
-            PYTHON3=$(echo "${PYTHON}" | sed "s/python/python3/")
-            # It's difficult to setup alias across GitHub action steps, so I just add a softlink
-            # here pointing to Python
-            ln -s "${PYTHON}" "${PYTHON3}"
-
-            PYTHON_PATH=$(dirname "${PYTHON}")
-            echo "${PYTHON_PATH}" >> "${GITHUB_PATH}"
-          else
-            echo "Found no Python using ${CONDA_RUN}"
-          fi
-        fi
+        export PATH=$(pwd)\Python\Scripts;$(pwd)\Python;$(pwd)"
+        export PYTHON_PATH="$(pwd)\Python"
 
     - name: Get temporary directory used by Windows Python
       shell: bash
