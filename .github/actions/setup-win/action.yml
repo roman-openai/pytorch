@@ -36,10 +36,10 @@ runs:
       run: |
         set +e
         set -x
-        export DESIRED_PYTHON=3.9
+        echo "DESIRED_PYTHON=3.9" | tee -a "${GITHUB_ENV}"
         .ci/pytorch/windows/internal/install_python.bat
-        export PATH="$(pwd)\Python\Scripts;$(pwd)\Python;$(pwd)"
-        export PYTHON_PATH="$(pwd)\Python"
+        echo "PATH=$(pwd)\Python\Scripts;$(pwd)\Python;$(pwd)" | tee -a "${GITHUB_ENV}"
+        echo "PYTHON_PATH=$(pwd)\Python" | tee -a "${GITHUB_ENV}"
 
     - name: Get temporary directory used by Windows Python
       shell: bash
