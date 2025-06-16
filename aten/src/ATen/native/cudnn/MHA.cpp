@@ -298,13 +298,13 @@ struct MHAGraphCache {
 
 auto& getMHAGraphCache_() {
   thread_local auto& instance =
-    *new MHAGraphCache<std::shared_ptr<fe::graph::Graph>, MHACacheKeyWrapper>;
+      *new MHAGraphCache<std::shared_ptr<fe::graph::Graph>, MHACacheKeyWrapper>;
   return instance;
 }
 
 auto& getMHAGraphBackwardCache_() {
   thread_local auto& instance =
-    *new MHAGraphCache<std::shared_ptr<fe::graph::Graph>, MHACacheKeyWrapper>;
+      *new MHAGraphCache<std::shared_ptr<fe::graph::Graph>, MHACacheKeyWrapper>;
   return instance;
 }
 
