@@ -1389,12 +1389,17 @@ void run_cudnn_SDP_fprop(
     // q is passed to us in BHSD dim order
     alloc_with_matching_layout(q, o, {b, h, s_q, d_v});
   }
+  bool use_ragged = use_ragged_in_dense(q, k, v, o, attn_bias.has_value());
   if (return_softmaxstats && !softmaxstats.defined()) {
-    // TODO(eqy): verify that this is correct
-    softmaxstats = at::empty({b, s_q, h, 1}, q.options().dtype(kFloat)).transpose(1, 2);
+    // TODO(eqy): investigate why cuDNN doesn't like BSH layout softmaxstats
+    if (!use_ragged) {
+      softmaxstats = at::empty({b, h, s_q, 1}, q.options().dtype(kFloat));
+    } else {
+      softmaxstats = at::empty({b, s_q, h, 1}, q.options().dtype(kFloat)).transpose(1, 2);
+    }
   }
 
-  if (use_ragged_in_dense(q, k, v, o, attn_bias.has_value())) {
+  if (use_ragged) {
     seqlen_q = at::full({b, 1, 1, 1}, s_q, q.options().dtype(kInt));
     seqlen_kv = at::full({b, 1, 1, 1}, s_kv, q.options().dtype(kInt));
     auto cum_seqlen_q = at::full({b + 1, 1, 1, 1}, s_q, q.options().dtype(kInt)).cumsum(0, kInt).add_(-s_q);
