@@ -100,6 +100,19 @@ bool Work::wait(std::chrono::milliseconds timeout) {
   return true;
 }
 
+void Work::waitStream() {
+#if defined(USE_CUDA) || defined(USE_ROCM)
+  // block cuda stream indefinitely until work is completed.
+  auto handle = torch::cuda::detail::barrier(std::chrono::milliseconds(0));
+
+  getFuture().addCallback(
+      [handle](c10::ivalue::Future& future) { handle.abort(); });
+#else
+  TORCH_CHECK(
+      false, "waitStream() is only supported for CUDA and ROCm backends.");
+#endif
+}
+
 void Work::abort() {
   TORCH_CHECK(false, "Work::abort not implemented.");
 }

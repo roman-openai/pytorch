@@ -24,6 +24,10 @@ if not c10d.is_available() or not c10d.is_gloo_available():
     sys.exit(0)
 
 import test_c10d_common
+
+import torch.distributed as dist
+import torch.nn.functional as F
+import torch.testing._internal.common_utils as common
 from test_c10d_common import (
     gpus_for_rank,
     LOOPBACK,
@@ -31,10 +35,6 @@ from test_c10d_common import (
     SparseGradientModule,
     Task,
 )
-
-import torch.distributed as dist
-import torch.nn.functional as F
-import torch.testing._internal.common_utils as common
 from torch import nn
 from torch.distributed._shard.sharded_tensor import (
     init_from_local_shards,
@@ -1562,6 +1562,21 @@ class ProcessGroupGlooTest(MultiProcessTestCase):
         for i, tensor in enumerate(tensors):
             self.assertEqual(torch.full(size, float(i * self.world_size)), tensor)
 
+    @skip_if_lt_x_gpu(2)
+    @requires_gloo()
+    @skipIfRocm
+    def test_wait_stream_cuda(self):
+        store = c10d.FileStore(self.file_name, self.world_size)
+        pg = self._create_process_group_gloo(
+            store, self.rank, self.world_size, self.opts()
+        )
+        t = torch.zeros(10, device="cuda")
+        work = pg.allreduce(t)
+        work.wait_stream()
+        torch.cuda.current_stream().synchronize()
+
+        work.wait()
+
 
 class DistributedDataParallelTest(
     test_c10d_common.CommonDistributedDataParallelTest, MultiProcessTestCase
@@ -2705,8 +2720,8 @@ class LargeCommTest(test_c10d_common.AbstractLargeCommTest, MultiProcessTestCase
 
 
 if __name__ == "__main__":
-    assert not torch.cuda._initialized, (
-        "test_distributed must not have initialized CUDA context on main process"
-    )
+    assert (
+        not torch.cuda._initialized
+    ), "test_distributed must not have initialized CUDA context on main process"
 
     run_tests()
