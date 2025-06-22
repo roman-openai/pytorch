@@ -800,13 +800,15 @@ if(BLAS STREQUAL "Eigen")
       message(STATUS "Found system Eigen at " ${EIGEN3_INCLUDE_DIR})
     else()
       message(STATUS "Did not find system Eigen. Using third party subdirectory.")
-      execute_process(COMMAND ${Python_EXECUTABLE} ../tools/optional_modules.py checkout_eigen
-                      WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-
-      set(EIGEN3_INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR}/../third_party/eigen)
     endif()
-    include_directories(SYSTEM ${EIGEN3_INCLUDE_DIR})
   endif()
+  if(NOT EIGEN3_FOUND)
+    execute_process(COMMAND ${Python_EXECUTABLE} ../tools/optional_modules.py checkout_eigen
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+
+    set(EIGEN3_INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR}/../third_party/eigen)
+  endif()
+  include_directories(SYSTEM ${EIGEN3_INCLUDE_DIR})
 endif()
 
 if(BUILD_PYTHON)
