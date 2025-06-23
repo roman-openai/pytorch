@@ -332,12 +332,14 @@ function(torch_cuda_select_nvcc_arch_flags out_variable)
   set(cuda_arch_ptx)
 
   if("${CUDA_ARCH_LIST}" STREQUAL "All")
-    set(CUDA_ARCH_LIST ${CUDA_KNOWN_GPU_ARCHITECTURES})
+    set(CUDA_ARCHITECTURES "all")
+    return()
   elseif("${CUDA_ARCH_LIST}" STREQUAL "Common")
-    set(CUDA_ARCH_LIST ${CUDA_COMMON_GPU_ARCHITECTURES})
+    set(CUDA_ARCHITECTURES "all-major")
+    return()
   elseif("${CUDA_ARCH_LIST}" STREQUAL "Auto")
-    CUDA_DETECT_INSTALLED_GPUS(CUDA_ARCH_LIST)
-    message(STATUS "Autodetected CUDA architecture(s): ${CUDA_ARCH_LIST}")
+    set(CUDA_ARCHITECTURES "native")
+    return()
   endif()
 
   # Now process the list and look for names
