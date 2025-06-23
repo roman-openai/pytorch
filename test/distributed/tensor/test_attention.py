@@ -452,7 +452,7 @@ class RingFlexAttentionTest(DTensorTestBase):
         from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
         # Compile the flex_attention function
-        flex_attention = torch.compile(flex_attention, dynamic=False)
+        flex_attention = torch.compile(flex_attention, dynamic=False, fullgraph=True)
         Q_BLOCK_SIZE_DEFAULT = 128
         KV_BLOCK_SIZE_DEFAULT = Q_BLOCK_SIZE_DEFAULT
 
@@ -463,6 +463,12 @@ class RingFlexAttentionTest(DTensorTestBase):
         context_tokens = KV_BLOCK_SIZE_DEFAULT * self.world_size
         dim = 32
         nheads = 8
+
+        device_mesh = init_device_mesh(
+            device_type=self.device_type,
+            mesh_shape=(self.world_size,),
+            mesh_dim_names=("cp",),
+        )
 
         q = torch.rand(
             (bs, nheads, query_tokens, dim),
@@ -496,13 +502,6 @@ class RingFlexAttentionTest(DTensorTestBase):
             q, k, v, block_mask=block_mask, return_lse=True
         )
         expect_out.sum().backward()
-
-        # test flex attention on DTensor
-        device_mesh = init_device_mesh(
-            device_type=self.device_type,
-            mesh_shape=(self.world_size,),
-            mesh_dim_names=("cp",),
-        )
 
         q_local_size = list(q.shape)
         q_local_size[2] //= self.world_size
