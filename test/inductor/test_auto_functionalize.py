@@ -1,3 +1,6 @@
+warning: Selection `PLW1507` has no effect because preview is not enabled.
+warning: Selection `RUF041` has no effect because preview is not enabled.
+warning: Selection `RUF048` has no effect because preview is not enabled.
 # Owner(s): ["module: functionalization"]
 
 import unittest
@@ -1732,6 +1735,306 @@ def forward(self, arg0_1: "f32[2][1]cpu"):
         with torch.inference_mode():
             y = f(x, w)
         self.assertEqual(y, x.sin())
+
+    def test_disjoint_view(self):
+        @torch.library.custom_op("mylib::foo_inplace", mutates_args={"x1", "x2"})
+        def foo_inplace(x1: torch.Tensor, x2: torch.Tensor) -> None:
+            x1.add_(1)
+            x2.add_(2)
+
+        @torch.library.custom_op("mylib::bar_out", mutates_args={"out"})
+        def bar_out(x1_0: torch.Tensor, x2_0: torch.Tensor, out: torch.Tensor) -> None:
+            out.copy_(x1_0 + x2_0 + 2)
+
+        inp = torch.randn(3, 3)
+
+        def f3(x1, x2, out):
+            foo_inplace(x1, x2)
+            bar_out(x1[0], x2[0], out)
+            return out
+
+        def f3_caller(x, compile=False):
+            x1 = x[0]
+            x2 = x[1]
+            out = torch.zeros_like(x)
+            if compile:
+                torch.compile(f3, fullgraph=True, backend="inductor")(x1, x2, out)
+            else:
+                f3(x1, x2, out)
+            return out
+
+        f3_inp = inp.clone().detach()
+        f3_compiled_inp = inp.clone().detach()
+        f3_out = f3_caller(f3_inp, compile=False)
+        f3_compiled_out = f3_caller(f3_compiled_inp, compile=True)
+        self.assertEqual(f3_out, f3_compiled_out)
+        self.assertEqual(f3_inp, f3_compiled_inp)
+
+    def test_output_structure_no_returns(self):
+        """Test that ops with no returns have output structure (None, *mutated_bases)."""
+
+        @torch.library.custom_op("test::mutate_only", mutates_args={"x"})
+        def mutate_only(x: torch.Tensor) -> None:
+            x.add_(1)
+
+        # Create a custom backend to inspect the graph
+        def inspect_backend(gm, example_inputs):
+            # Find auto_functionalized_v2 nodes
+            for node in gm.graph.nodes:
+                if node.target == torch.ops.higher_order.auto_functionalized_v2:
+                    # Check the output structure
+                    getitem_users = [
+                        u for u in node.users if u.target == operator.getitem
+                    ]
+                    indices = sorted([u.args[1] for u in getitem_users])
+
+                    # For ops with no returns, we expect getitem indices to start at 1
+                    # Index 0 would be the None return value
+                    self.assertEqual(
+                        indices,
+                        [1],
+                        f"Expected getitem[1] for mutated base, got indices {indices}",
+                    )
+
+                    # Verify the op has no returns
+                    op = node.args[0]
+                    self.assertEqual(
+                        len(op._schema.returns), 0, "Test op should have no returns"
+                    )
+
+            # Return a dummy compiled function
+            def compiled_fn(*args, **kwargs):
+                return gm(*args, **kwargs)
+
+            return compiled_fn
+
+        def f(x):
+            mutate_only(x)
+            return x
+
+        x = torch.randn(3)
+        f_compiled = torch.compile(f, backend=inspect_backend)
+        f_compiled(x.clone())
+
+    def test_output_structure_with_returns(self):
+        """Test that ops with returns have output structure (return_val, *mutated_bases)."""
+
+        @torch.library.custom_op("test::mutate_and_return", mutates_args={"x"})
+        def mutate_and_return(x: torch.Tensor) -> torch.Tensor:
+            x.add_(1)
+            return x.sum()
+
+        # Register fake implementation
+        @mutate_and_return.register_fake
+        def _(x):
+            return torch.empty((), dtype=x.dtype, device=x.device)
+
+        def inspect_backend(gm, example_inputs):
+            for node in gm.graph.nodes:
+                if node.target == torch.ops.higher_order.auto_functionalized_v2:
+                    getitem_users = [
+                        u for u in node.users if u.target == operator.getitem
+                    ]
+                    indices = sorted([u.args[1] for u in getitem_users])
+
+                    # For ops with 1 return, mutated base should be at index 1
+                    self.assertIn(0, indices, "Expected getitem[0] for return value")
+                    self.assertIn(1, indices, "Expected getitem[1] for mutated base")
+
+                    op = node.args[0]
+                    self.assertEqual(
+                        len(op._schema.returns), 1, "Test op should have 1 return"
+                    )
+
+            def compiled_fn(*args, **kwargs):
+                return gm(*args, **kwargs)
+
+            return compiled_fn
+
+        def f(x):
+            result = mutate_and_return(x)
+            return result, x
+
+        x = torch.randn(3)
+        f_compiled = torch.compile(f, backend=inspect_backend)
+        f_compiled(x.clone())
+
+    def test_multiple_mutated_bases_ordering(self):
+        """Test that multiple mutated bases maintain correct ordering."""
+
+        @torch.library.custom_op("test::mutate_two", mutates_args={"x1", "x2"})
+        def mutate_two(x1: torch.Tensor, x2: torch.Tensor) -> None:
+            x1.add_(1)
+            x2.add_(2)
+
+        def inspect_backend(gm, example_inputs):
+            for node in gm.graph.nodes:
+                if node.target == torch.ops.higher_order.auto_functionalized_v2:
+                    # Check _all_bases ordering
+                    all_bases = node.kwargs["_all_bases"]
+                    self.assertEqual(len(all_bases), 2, "Should have 2 bases")
+
+                    # Check getitem indices for copy operations
+                    copy_nodes = []
+                    for user in node.users:
+                        if user.target == operator.getitem:
+                            for copy_user in user.users:
+                                if copy_user.target == torch.ops.aten.copy_.default:
+                                    copy_nodes.append(
+                                        {
+                                            "dst": copy_user.args[0],
+                                            "getitem_idx": user.args[1],
+                                        }
+                                    )
+
+                    # For no returns, bases should be at indices 1 and 2
+                    getitem_indices = sorted([c["getitem_idx"] for c in copy_nodes])
+                    self.assertEqual(
+                        getitem_indices,
+                        [1, 2],
+                        f"Expected getitem[1,2] for bases, got {getitem_indices}",
+                    )
+
+            def compiled_fn(*args, **kwargs):
+                return gm(*args, **kwargs)
+
+            return compiled_fn
+
+        def f(x1, x2):
+            mutate_two(x1, x2)
+            return x1, x2
+
+        x1 = torch.randn(3)
+        x2 = torch.randn(3)
+        f_compiled = torch.compile(f, backend=inspect_backend)
+        f_compiled(x1.clone(), x2.clone())
+
+    def test_copy_node_structure(self):
+        """Test that copy nodes have the expected structure."""
+
+        @torch.library.custom_op("test::simple_mutate", mutates_args={"x"})
+        def simple_mutate(x: torch.Tensor) -> None:
+            x.add_(1)
+
+        def inspect_backend(gm, example_inputs):
+            for node in gm.graph.nodes:
+                if node.target == torch.ops.higher_order.auto_functionalized_v2:
+                    # Find copy nodes
+                    for user in node.users:
+                        if user.target == operator.getitem:
+                            for copy_user in user.users:
+                                if copy_user.target == torch.ops.aten.copy_.default:
+                                    # Verify copy node structure
+                                    dst = copy_user.args[0]
+                                    src = copy_user.args[1]
+
+                                    # src should be the getitem node
+                                    self.assertEqual(
+                                        src, user, "Copy source should be getitem node"
+                                    )
+                                    self.assertEqual(
+                                        src.target,
+                                        operator.getitem,
+                                        "Copy source should be getitem",
+                                    )
+                                    self.assertEqual(
+                                        src.args[0],
+                                        node,
+                                        "getitem should access auto_functionalized_v2 node",
+                                    )
+
+            def compiled_fn(*args, **kwargs):
+                return gm(*args, **kwargs)
+
+            return compiled_fn
+
+        def f(x):
+            simple_mutate(x)
+            return x
+
+        x = torch.randn(3)
+        f_compiled = torch.compile(f, backend=inspect_backend)
+        f_compiled(x.clone())
+
+    def test_views_of_same_base(self):
+        """Comprehensive test for handling views of the same base tensor.
+
+        This test verifies:
+        1. Views of same base share a single base in _all_bases
+        2. Each view gets its own copy operation
+        3. Both mutations are applied correctly (not skipped by storage check in reinplace pass)
+        """
+
+        @torch.library.custom_op("test::mutate_views", mutates_args={"x1", "x2"})
+        def mutate_views(x1: torch.Tensor, x2: torch.Tensor) -> None:
+            x1.add_(1)
+            x2.add_(2)
+
+        def inspect_backend(gm, example_inputs):
+            for node in gm.graph.nodes:
+                if node.target == torch.ops.higher_order.auto_functionalized_v2:
+                    all_bases = node.kwargs["_all_bases"]
+
+                    # Test 1: When x1 and x2 are views of the same base,
+                    # _all_bases should contain the single base tensor
+                    self.assertEqual(len(all_bases), 1,
+                                   "Views of same base should share a single base in _all_bases")
+
+                    # Check base indices in kwargs
+                    x1_base_idx = node.kwargs.get("_x1_base_index", None)
+                    x2_base_idx = node.kwargs.get("_x2_base_index", None)
+
+                    # Both should point to the same base (index 0)
+                    self.assertEqual(x1_base_idx, 0, "x1 should map to base 0")
+                    self.assertEqual(x2_base_idx, 0, "x2 should map to base 0")
+
+                    # Test 2: Collect all copy operations
+                    copy_operations = []
+                    for user in node.users:
+                        if user.target == operator.getitem:
+                            for copy_user in user.users:
+                                if copy_user.target == torch.ops.aten.copy_.default:
+                                    copy_operations.append({
+                                        'dst': copy_user.args[0],
+                                        'src': copy_user.args[1],
+                                        'getitem_idx': user.args[1],
+                                        'getitem_node': user
+                                    })
+
+                    # We should have 2 separate copy operations
+                    self.assertGreaterEqual(len(copy_operations), 2,
+                                          f"Expected at least 2 copy operations for 2 mutated views, got {len(copy_operations)}")
+
+                    # Each copy should have a different getitem index
+                    getitem_indices = [c['getitem_idx'] for c in copy_operations]
+                    self.assertEqual(len(set(getitem_indices)), len(getitem_indices),
+                                   f"Each copy operation should have unique getitem index, got {getitem_indices}")
+
+                    # Verify the destinations are different
+                    destinations = [c['dst'] for c in copy_operations]
+                    self.assertEqual(len(set(str(d) for d in destinations)), len(destinations),
+                                   f"Each copy operation should have unique destination, got {destinations}")
+
+            def compiled_fn(*args, **kwargs):
+                return gm(*args, **kwargs)
+            return compiled_fn
+
+        def f(base):
+            x1 = base[0]
+            x2 = base[1]
+            mutate_views(x1, x2)
+            return base
+
+        base = torch.randn(2, 3)
+        f_compiled = torch.compile(f, backend=inspect_backend)
+        result = f_compiled(base.clone())
+
+        # Test 3: Verify that BOTH mutations were applied correctly
+        expected = base.clone()
+        expected[0] += 1  # x1's mutation
+        expected[1] += 2  # x2's mutation
+        self.assertTrue(torch.allclose(result, expected),
+                       f"Result mismatch: got {result}, expected {expected}")
 
 
 if __name__ == "__main__":

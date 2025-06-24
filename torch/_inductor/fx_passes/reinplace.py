@@ -1,3 +1,6 @@
+warning: Selection `PLW1507` has no effect because preview is not enabled.
+warning: Selection `RUF041` has no effect because preview is not enabled.
+warning: Selection `RUF048` has no effect because preview is not enabled.
 # mypy: allow-untyped-defs
 import itertools
 import logging
@@ -590,7 +593,7 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
                 return any(
                     get_node_storage(a) in storage_of_reinplaced_args for a in arg
                 )
-            return get_node_storage(mutated_arg) in storage_of_reinplaced_args
+            return get_node_storage(arg) in storage_of_reinplaced_args
 
         for arg in old_tensors_to_clone:
             assert arg in kwargs
@@ -607,20 +610,129 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
             # >>> op(x, y)
             # This also applies if we have views: functional_op(x, x[0])
             # should not reinplace into op(x, x[0]).
-            should_attempt_reinplace = not tensor_with_same_storage_already_reinplaced(
-                mutated_arg
-            )
+            # However, for auto_functionalized_v2, different views of the same base
+            # are handled separately and each needs its own copy operation
+            if trigger == ReInplaceTrigger.AUTO_FUNC_V2:
+                # For AUTO_FUNC_V2, we check if this specific node was already reinplaced
+                # rather than checking storage, because different views need separate handling
+                should_attempt_reinplace = mutated_arg not in replace_dict.values()
+
+                # Validate that each view gets its own copy operation
+                # If there are multiple bases (_all_bases), each should have a corresponding copy
+                all_bases = node.kwargs.get("_all_bases", [])
+                if len(all_bases) > 1:
+                    # Count expected copy operations for this auto_functionalized_v2 node
+                    copy_count = sum(
+                        1
+                        for (dst, src), _ in copy_args_to_copy_nodes.items()
+                        if isinstance(src, torch.fx.Node)
+                        and src.target == operator.getitem
+                        and src.args[0] == node
+                    )
+                    assert copy_count >= len(all_bases), (
+                        f"Expected at least {len(all_bases)} copy operations for {len(all_bases)} bases, found {copy_count}"
+                    )
+            else:
+                should_attempt_reinplace = (
+                    not tensor_with_same_storage_already_reinplaced(mutated_arg)
+                )
+
             if should_attempt_reinplace and can_inplace(node, mutated_arg):
                 # In general, we probably do not need those optimizations.
-                copy_node = copy_args_to_copy_nodes.get((mutated_arg, node))
+                copy_node = None
+                if trigger == ReInplaceTrigger.AUTO_FUNC_V2:
+                    # For auto_functionalized_v2, we need to find the copy node that
+                    # copies from the correct getitem output
+
+                    # Validate assumptions about auto_functionalized_v2 node structure
+                    assert hasattr(node, "args") and len(node.args) > 0, (
+                        f"auto_functionalized_v2 node must have args, got {node}"
+                    )
+                    assert hasattr(node, "kwargs") and "_all_bases" in node.kwargs, (
+                        f"auto_functionalized_v2 must have _all_bases in kwargs, got kwargs={node.kwargs}"
+                    )
+
+                    op = node.args[0]
+                    num_real_outputs = 0
+                    if hasattr(op, "_schema") and hasattr(op._schema, "returns"):
+                        num_real_outputs = len(op._schema.returns)
+
+                    # Validate base index is in range
+                    all_bases = node.kwargs.get("_all_bases", [])
+                    assert isinstance(arg, int) and 0 <= arg < len(all_bases), (
+                        f"Base index {arg} out of range for {len(all_bases)} bases"
+                    )
+                    assert all_bases[arg] == mutated_arg, (
+                        f"Base at index {arg} should be {mutated_arg}, got {all_bases[arg]}"
+                    )
+
+                    # Look for copy nodes where src is getitem[base_idx] from this node
+                    # For auto_functionalized_v2, even ops with no returns have (None, *bases)
+                    # So bases always start at index 1
+                    if num_real_outputs == 0:
+                        expected_idx = (
+                            1 + arg
+                        )  # Bases start at index 1 when no real outputs
+                    else:
+                        expected_idx = num_real_outputs + arg
+
+                    for (dst, src), cn in copy_args_to_copy_nodes.items():
+                        if (
+                            dst == mutated_arg
+                            and isinstance(src, torch.fx.Node)
+                            and src.target == operator.getitem
+                            and src.args[0] == node
+                            and src.args[1] == expected_idx
+                        ):
+                            copy_node = cn
+                            break
+                else:
+                    copy_node = copy_args_to_copy_nodes.get((mutated_arg, node))
+
                 if copy_node is not None:
                     replace_dict[copy_node] = copy_node.args[0]
-                if not trigger == ReInplaceTrigger.AUTO_FUNC_V2:
+                if trigger == ReInplaceTrigger.AUTO_FUNC_V2:
+                    # For auto_functionalized_v2, the output structure is:
+                    # (actual_output_0, ..., actual_output_n, mutated_base_0, ..., mutated_base_m)
+                    # BUT: When there are no real outputs, the structure is (None, mutated_base_0, ...)
+                    # We need to find the number of actual outputs to know where mutated bases start
+
+                    # Validate node structure
+                    assert hasattr(node, "args") and len(node.args) > 0, (
+                        "auto_functionalized_v2 node must have args"
+                    )
+
+                    op = node.args[0]
+                    num_real_outputs = 0
+                    if hasattr(op, "_schema") and hasattr(op._schema, "returns"):
+                        num_real_outputs = len(op._schema.returns)
+
+                    # Bases start at index 1 when no real outputs, otherwise after real outputs
+                    base_start_idx = 1 if num_real_outputs == 0 else num_real_outputs
+
+                    # Validate our understanding of the output structure
+                    all_bases = node.kwargs.get("_all_bases", [])
+                    expected_total_outputs = base_start_idx + len(all_bases)
+
                     for user in node.users:
-                        # For auto_functionalize_v2, arg is the index of the base, where base at index i corresponds to
-                        # output atindex size(out)+i.
-                        # This used to compare string with integers before for auto_functionalize_v2. Not sure
-                        # if it was needed for inplaceable_triton_ops?
+                        if user.target == operator.getitem and isinstance(
+                            user.args[1], int
+                        ):
+                            user_idx = user.args[1]
+
+                            # Validate getitem index is within expected range
+                            assert 0 <= user_idx < expected_total_outputs, (
+                                f"getitem index {user_idx} out of range, expected < {expected_total_outputs}"
+                            )
+
+                            # Check if this user is accessing a mutated base (not a regular output)
+                            if user_idx >= base_start_idx:
+                                base_idx = user_idx - base_start_idx
+                                if base_idx == arg:  # arg is the index in _all_bases
+                                    replace_dict[user] = mutated_arg
+                else:
+                    # For auto_functionalized (v1) and other triggers
+                    for user in node.users:
                         if user.target == operator.getitem and user.args[1] == arg:
                             replace_dict[user] = mutated_arg
 
