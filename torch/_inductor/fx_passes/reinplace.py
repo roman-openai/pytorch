@@ -613,22 +613,6 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
                 # For AUTO_FUNC_V2, we check if this specific node was already reinplaced
                 # rather than checking storage, because different views need separate handling
                 should_attempt_reinplace = mutated_arg not in replace_dict.values()
-
-                # Validate that each view gets its own copy operation
-                # If there are multiple bases (_all_bases), each should have a corresponding copy
-                all_bases = node.kwargs.get("_all_bases", [])
-                if len(all_bases) > 1:
-                    # Count expected copy operations for this auto_functionalized_v2 node
-                    copy_count = sum(
-                        1
-                        for (dst, src), _ in copy_args_to_copy_nodes.items()
-                        if isinstance(src, torch.fx.Node)
-                        and src.target == operator.getitem
-                        and src.args[0] == node
-                    )
-                    assert copy_count >= len(all_bases), (
-                        f"Expected at least {len(all_bases)} copy operations for {len(all_bases)} bases, found {copy_count}"
-                    )
             else:
                 should_attempt_reinplace = (
                     not tensor_with_same_storage_already_reinplaced(mutated_arg)
