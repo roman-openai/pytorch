@@ -533,7 +533,7 @@ class _TorchDynamoContext:
         patch_fn=nothing,
         first_ctx=False,
         *,
-        error_on_graph_break=None,
+        error_on_graph_break=False,
         export=False,
         dynamic=None,
         compiler_config=None,
@@ -742,7 +742,9 @@ class _TorchDynamoContext:
                 _maybe_set_eval_frame(prior)
 
         # hooks to properly handle inlining
-        compile_wrapper._torchdynamo_inline = fn  # type: ignore[attr-defined]
+        compile_wrapper._torchdynamo_inline = (  # type: ignore[attr-defined]
+            external_utils.wrap_inline_with_set_fullgraph(fn, self.error_on_graph_break)
+        )
 
         # Save the function pointer to find the original callable while nesting
         # of decorators.
@@ -802,7 +804,7 @@ class OptimizeContext(_TorchDynamoContext):
         backend_ctx_ctor,
         first_ctx=False,
         *,
-        error_on_graph_break=None,
+        error_on_graph_break=False,
         export=False,
         dynamic=None,
         compiler_config=None,
@@ -940,7 +942,7 @@ def _optimize_catch_errors(
     compile_fn,
     hooks: Hooks,
     backend_ctx_ctor=null_context,
-    error_on_graph_break=None,
+    error_on_graph_break=False,
     export=False,
     dynamic=None,
     compiler_config=None,
