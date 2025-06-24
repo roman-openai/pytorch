@@ -1124,7 +1124,6 @@ def forward(self, arg0_1: "f32[2][1]cpu"):
         alias_default_1: "f32[2][1]cpu" = torch.ops.aten.alias.default(arg0_1)
         foo_default = torch.ops.mylib.foo.default(alias_default, alias_default_1);  \
 alias_default = alias_default_1 = foo_default = None
-        copy_: "f32[2][1]cpu" = torch.ops.aten.copy_.default(arg0_1, arg0_1);  copy_ = None
         return (arg0_1, arg0_1)""",  # noqa: B950
                         ignore_comments=True,
                         ignore_empty_lines=True,
