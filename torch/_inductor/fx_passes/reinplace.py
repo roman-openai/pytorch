@@ -611,7 +611,7 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
             # are handled separately and each needs its own copy operation
             if trigger == ReInplaceTrigger.AUTO_FUNC_V2:
                 # For AUTO_FUNC_V2, we check if this specific node was already reinplaced
-                # rather than checking storage, because different views need separate handling
+                # instead of checking storage, because different views need separate handling
                 should_attempt_reinplace = mutated_arg not in replace_dict.values()
             else:
                 should_attempt_reinplace = (
@@ -677,9 +677,6 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
 
                     # Bases start at index 1 when no real outputs, otherwise after real outputs
                     base_start_idx = 1 if num_real_outputs == 0 else num_real_outputs
-
-                    # Validate our understanding of the output structure
-                    all_bases = node.kwargs.get("_all_bases", [])
 
                     for user in node.users:
                         if user.target == operator.getitem and isinstance(
