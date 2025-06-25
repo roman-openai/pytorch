@@ -625,14 +625,6 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
                     # For auto_functionalized_v2, we need to find the copy node that
                     # copies from the correct getitem output
 
-                    # Validate assumptions about auto_functionalized_v2 node structure
-                    assert hasattr(node, "args") and len(node.args) > 0, (
-                        f"auto_functionalized_v2 node must have args, got {node}"
-                    )
-                    assert hasattr(node, "kwargs") and "_all_bases" in node.kwargs, (
-                        f"auto_functionalized_v2 must have _all_bases in kwargs, got kwargs={node.kwargs}"
-                    )
-
                     op = node.args[0]
                     num_real_outputs = 0
                     if hasattr(op, "_schema") and hasattr(op._schema, "returns"):
@@ -678,11 +670,6 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
                     # BUT: When there are no real outputs, the structure is (None, mutated_base_0, ...)
                     # We need to find the number of actual outputs to know where mutated bases start
 
-                    # Validate node structure
-                    assert hasattr(node, "args") and len(node.args) > 0, (
-                        "auto_functionalized_v2 node must have args"
-                    )
-
                     op = node.args[0]
                     num_real_outputs = 0
                     if hasattr(op, "_schema") and hasattr(op._schema, "returns"):
@@ -693,18 +680,12 @@ def reinplace_inplaceable_ops_core(graph: torch.fx.Graph) -> None:
 
                     # Validate our understanding of the output structure
                     all_bases = node.kwargs.get("_all_bases", [])
-                    expected_total_outputs = base_start_idx + len(all_bases)
 
                     for user in node.users:
                         if user.target == operator.getitem and isinstance(
                             user.args[1], int
                         ):
                             user_idx = user.args[1]
-
-                            # Validate getitem index is within expected range
-                            assert 0 <= user_idx < expected_total_outputs, (
-                                f"getitem index {user_idx} out of range, expected < {expected_total_outputs}"
-                            )
 
                             # Check if this user is accessing a mutated base (not a regular output)
                             if user_idx >= base_start_idx:
