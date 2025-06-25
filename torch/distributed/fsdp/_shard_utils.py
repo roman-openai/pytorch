@@ -56,7 +56,7 @@ def _create_chunk_sharded_tensor(
     offsets = [0] * (len(chunk_sizes[0]) - 1)
     chunk_offsets = [[d0] + offsets for d0 in dim0_offsets]
     device_type = (
-        distributed_c10d._get_pg_default_device(pg).type
+        distributed_c10d._get_object_coll_device(pg).type
         if device is None
         else device.type
     )
