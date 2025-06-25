@@ -2,6 +2,7 @@ from typing import Any, Callable, Union
 
 from sympy import Expr
 
+import torch._inductor.config as config
 from torch._inductor.ir import (
     ComputedBuffer,
     InputBuffer,
@@ -27,32 +28,38 @@ if try_import_cutlass():
     import textwrap
     from typing import Union
 
-    from cutlass.backend.c_types import (  # type: ignore[import-untyped, import-not-found]
-        EmptyByte,
-    )
-    from cutlass.backend.epilogue import (  # type: ignore[import-untyped, import-not-found]
-        dtype2ctype,
-    )
-    from cutlass.backend.evt import (  # type: ignore[import-untyped, import-not-found]
-        EpilogueFunctorVisitor,
-    )
-    from cutlass.backend.evt.backend.emitter_base import (  # type: ignore[import-untyped, import-not-found]
-        FusionCallbacks,
-    )
-    from cutlass.backend.evt.backend.sm90_emitter import (  # type: ignore[import-untyped, import-not-found]
-        CollectiveEpilogue,
-    )
-    from cutlass.backend.evt.frontend import (  # type: ignore[import-untyped, import-not-found]
-        PythonASTFrontend,
-    )
-    from cutlass.backend.evt.ir.tensor import (  # type: ignore[import-untyped, import-not-found]
-        Tensor as CutlassTensor,
-    )
     from cutlass_library import (
         DataType,
         EpilogueScheduleType,
         LayoutType,
         TileDescription,
+    )
+
+    if config.is_fbcode():
+        import python_cutlass  # type: ignore[import-untyped, import-not-found]
+    else:
+        import cutlass as python_cutlass  # noqa: F401  # type: ignore[import-untyped, import-not-found]
+
+    from python_cutlass.backend.c_types import (  # type: ignore[import-untyped, import-not-found]
+        EmptyByte,
+    )
+    from python_cutlass.backend.epilogue import (  # type: ignore[import-untyped, import-not-found]
+        dtype2ctype,
+    )
+    from python_cutlass.backend.evt import (  # type: ignore[import-untyped, import-not-found]
+        EpilogueFunctorVisitor,
+    )
+    from python_cutlass.backend.evt.backend.emitter_base import (  # type: ignore[import-untyped, import-not-found]
+        FusionCallbacks,
+    )
+    from python_cutlass.backend.evt.backend.sm90_emitter import (  # type: ignore[import-untyped, import-not-found]
+        CollectiveEpilogue,
+    )
+    from python_cutlass.backend.evt.frontend import (  # type: ignore[import-untyped, import-not-found]
+        PythonASTFrontend,
+    )
+    from python_cutlass.backend.evt.ir.tensor import (  # type: ignore[import-untyped, import-not-found]
+        Tensor as CutlassTensor,
     )
 
     from torch._inductor.codegen.cuda import cuda_env
@@ -82,9 +89,9 @@ non-contiguous layout, recieved stride: {stride} and shape: {shape}"
 
             return CutlassTensor(
                 shape=shape,
-                layout_tag=LayoutType.RowMajor
-                if is_row_major
-                else LayoutType.ColumnMajor,
+                layout_tag=(
+                    LayoutType.RowMajor if is_row_major else LayoutType.ColumnMajor
+                ),
                 element=torch_dtype_to_cutlass_type(buffer.get_layout().dtype),
             )
 
@@ -151,10 +158,10 @@ non-contiguous layout, recieved stride: {stride} and shape: {shape}"
 
         # Fragile, but this is the only way to guarantee t is expected type because t is a local class
         def is_nested_visitor_type(t: type) -> bool:
-            return (
-                ".".join([t.__module__, t.__qualname__])
-                == "cutlass.backend.c_types.visitor_factory.<locals>.VisitorType"
-            )
+            return ".".join([t.__module__, t.__qualname__]) in {
+                "python_cutlass.backend.c_types.visitor_factory.<locals>.VisitorType",
+                "cutlass.backend.c_types.visitor_factory.<locals>.VisitorType",
+            }
 
         buffer = IndentedBuffer()
         with buffer.set_tabwidth(2):
@@ -207,10 +214,10 @@ non-contiguous layout, recieved stride: {stride} and shape: {shape}"
         # Today, arguments are either a pointer to the
         # node's memory, a stride tuple, the datatype
         # Once again, need to check for local class type for stride tuple
-        if (
-            str(arg_ty)
-            == "<class 'cutlass.backend.c_types.tuple_factory_.<locals>.TupleType'>"
-        ):
+        if str(arg_ty) in {
+            "<class 'python_cutlass.backend.c_types.tuple_factory_.<locals>.TupleType'>",
+            "<class 'cutlass.backend.c_types.tuple_factory_.<locals>.TupleType'>",
+        }:
             DEFAULT_STRIDE_LEN = 3
             assert len(node.get_layout().stride) <= DEFAULT_STRIDE_LEN
             stride = [size_hint_fn(x) for x in node.get_layout().stride]
